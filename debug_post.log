@@ -1,0 +1,38 @@
+
+=== POST submit 2026-05-02 08:27:26 ===
+l_etab_benef: Array
+(
+    [0] => 
+    [1] => 
+)
+l_dept_benef: Array
+(
+    [0] => 
+    [1] => 
+)
+l_cours: Array
+(
+    [0] => Programmation
+    [1] => Santé
+)
+
+=== step1 lignes 08:30:22 ===
+[0] cours=Programmation etab=2 dept=28
+[1] cours=Santé etab=1 dept=2
+
+=== POST submit 2026-05-02 08:30:27 ===
+l_etab_benef: Array
+(
+    [0] => 
+    [1] => 
+)
+l_dept_benef: Array
+(
+    [0] => 
+    [1] => 
+)
+l_cours: Array
+(
+    [0] => Programmation
+    [1] => Santé
+)

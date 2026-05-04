@@ -1,0 +1,3 @@
+# Interdire tout accès direct au dossier data/
+# Les fichiers sont servis via voir_preuve.php uniquement
+Require all denied

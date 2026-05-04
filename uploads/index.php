@@ -1,0 +1,1 @@
+<?php // Accès direct interdit

@@ -1,0 +1,19 @@
+{
+    "name": "ujkz/fiches-programmatiques",
+    "description": "Système de gestion des fiches programmatiques — Université Joseph KI-ZERBO",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": ">=8.1"
+    },
+    "require-dev": {},
+    "suggest": {
+        "phpmailer/phpmailer": "Envoi d'emails SMTP (recommandé en production)"
+    },
+    "config": {
+        "optimize-autoloader": true
+    },
+    "extra": {
+        "notes": "Installer PHPMailer si SMTP requis : composer require phpmailer/phpmailer"
+    }
+}
