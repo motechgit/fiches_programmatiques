@@ -1,7 +1,13 @@
 <?php
+// ============================================================
+// config/app.php — Configuration générale
+// Généré par install.php — adapter selon l'environnement
+// ============================================================
 declare(strict_types=1);
+
 return [
-    'base_url' => 'http://127.0.0.1/fiches_programmatiques',
+    // URL de base (SANS slash final) — laisser vide pour auto-détection
+    'base_url' => '',
     'env'      => 'production',
     'debug'    => false,
 ];

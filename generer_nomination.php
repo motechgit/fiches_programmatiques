@@ -15,8 +15,13 @@ $security = new Security($config);
 $security->sendSecurityHeaders();
 $security->startSecureSession();
 
-if (!Auth::check() || !in_array(Auth::userRole(), ['vp_eip','dei'], true))
-    die('Accès refusé.');
+$_roleNom = Auth::userRole();
+if (empty($_roleNom)) { header('Location: login.php'); exit; }
+if (!in_array($_roleNom, ['vp_eip','dei'], true)) die('Accès refusé.');
+// Renouveler user_since si besoin (compatibilité timeout)
+if (empty($_SESSION['user_id']) && !empty($_SESSION['user_role'])) {
+    $_SESSION['user_since'] = time();
+}
 
 $pdo     = Database::getInstance();
 $ensId   = (int)($_GET['ens_id'] ?? 0);

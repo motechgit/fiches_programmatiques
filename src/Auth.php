@@ -116,10 +116,28 @@ class Auth
     // ── Vérification session ─────────────────────────────────
     public static function check(int $timeoutSec = 28800): bool // 8h par défaut
     {
+        // Si user_role présent mais user_id absent (après timeout partiel),
+        // tenter de récupérer user_id depuis la BD pour restaurer la session
+        if (empty($_SESSION['user_id']) && !empty($_SESSION['user_role'])) {
+            try {
+                $pdo2 = \Database::getInstance();
+                $login = $_SESSION['user_login'] ?? '';
+                if ($login) {
+                    $st = $pdo2->prepare("SELECT id FROM utilisateurs WHERE login=? AND actif=1 LIMIT 1");
+                    $st->execute([$login]);
+                    $row = $st->fetch();
+                    if ($row) {
+                        $_SESSION['user_id']    = $row['id'];
+                        $_SESSION['user_since'] = time();
+                    }
+                }
+            } catch (\Exception $ignored) {}
+        }
+
         if (empty($_SESSION['user_id']) || empty($_SESSION['user_role'])) {
             return false;
         }
-        // Si user_since absent (ancienne session), le réinitialiser
+        // Si user_since absent, le réinitialiser
         if (empty($_SESSION['user_since'])) {
             $_SESSION['user_since'] = time();
         }
