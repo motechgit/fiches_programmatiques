@@ -13,6 +13,41 @@ $sem   = $fiche['semestre'] ?? 'S1';
 $semLabel = ($sem === 'S1') ? '1' : '2';
 $dateImpression = date('d/m/Y à H:i');
 
+// Génération du numéro de fiche et QR code
+$numeroFiche = $fiche['numero_fiche'] ?? '';
+$qrcodeToken = $fiche['qrcode_token'] ?? '';
+$qrcodeBase64 = '';
+
+// Si pas de numéro, le générer
+if (!$numeroFiche) {
+    $anneeNum = explode('-', $annee)[0];
+    $numeroFiche = 'FP-' . $anneeNum . '-' . str_pad((string)$fiche['id'], 4, '0', STR_PAD_LEFT);
+    // Sauvegarder
+    try {
+        $updateStmt = Database::getInstance()->prepare("UPDATE fiches SET numero_fiche = ? WHERE id = ?");
+        $updateStmt->execute([$numeroFiche, (int)$fiche['id']]);
+    } catch (Exception $ex) {
+        // Silencieusement ignorer l'erreur de sauvegarde
+    }
+}
+
+// Si pas de token QR, le générer
+if (!$qrcodeToken) {
+    $qrcodeToken = bin2hex(random_bytes(16));
+    // Sauvegarder
+    try {
+        $updateStmt = Database::getInstance()->prepare("UPDATE fiches SET qrcode_token = ? WHERE id = ?");
+        $updateStmt->execute([$qrcodeToken, (int)$fiche['id']]);
+    } catch (Exception $ex) {
+        // Silencieusement ignorer l'erreur de sauvegarde
+    }
+}
+
+// Générer le QR code en base64
+$verificationUrl = 'https://ujkz.edu.bf/verifier-fiche?token=' . urlencode($qrcodeToken);
+// Placeholder QR code (à remplacer par vraie génération si librairie disponible)
+$qrcodeBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAYAAAAeP4ixAAAAYklEQVR4nO3TMQEAAADCoPVPbQhDoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHw1cMAAb66OgAAAAASUVORK5CYII=';
+
 // Calcul des volumes effectués depuis les preuves
 $cmEffectue = 0; $tdEffectue = 0;
 foreach ($preuves as $p) {
@@ -141,6 +176,19 @@ $sigActors = [
         <em>La Patrie ou la Mort, nous Vaincrons</em><br>
         <span style="letter-spacing:2px;font-size:7.5pt">·········································</span><br>
         Année universitaire <strong><?= $e($annee) ?></strong>
+      </td>
+    </tr>
+  </table>
+
+  <!-- Numéro de fiche et QR code -->
+  <table style="width:100%;border:none;border-collapse:collapse;margin-bottom:8px">
+    <tr>
+      <td style="width:70%;vertical-align:top;font-size:10pt">
+        <strong>Numéro de fiche : <?= $e($numeroFiche) ?></strong><br>
+        <span style="font-size:9pt;color:#666">Pour vérification de l'authenticité</span>
+      </td>
+      <td style="width:30%;text-align:right;vertical-align:top">
+        <img src="<?= $qrcodeBase64 ?>" alt="QR Code" style="width:80px;height:80px;border:1px solid #999">
       </td>
     </tr>
   </table>

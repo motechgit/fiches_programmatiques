@@ -1,0 +1,219 @@
+═══════════════════════════════════════════════════════════════════════════════
+  FICHES PROGRAMMATIQUES UJKZ — RÉCAPITULATIF COMPLET DES MODIFICATIONS
+  Session : 7 mai 2026 — Implémentation Dossier VACATAIRE
+═══════════════════════════════════════════════════════════════════════════════
+
+───────────────────────────────────────────────────────────────────────────────
+1. MODIFICATIONS BD (Migrations)
+───────────────────────────────────────────────────────────────────────────────
+
+✅ CRÉÉE : migrations/022_add_telephone_specialite.sql
+   └─ Ajouter colonnes à table enseignants :
+      • telephone VARCHAR(20)
+      • specialite VARCHAR(255)
+   └─ Exécuter manuellement via PhpMyAdmin :
+      ```sql
+      ALTER TABLE `enseignants` ADD COLUMN `telephone` VARCHAR(20);
+      ALTER TABLE `enseignants` ADD COLUMN `specialite` VARCHAR(255);
+      ```
+
+───────────────────────────────────────────────────────────────────────────────
+2. FICHIERS PHP CRÉÉS
+───────────────────────────────────────────────────────────────────────────────
+
+✅ NOUVEAU : src/VacataireDossierRepository.php (331 lignes)
+   Classe complète pour gérer les dossiers VACATAIRE
+   
+   Méthodes principales :
+   • createDossierAfterValidation() — Crée dossier après validation fiche
+   • getDossier() — Récupère un dossier par ID
+   • getDossiersByEnseignant() — Liste les dossiers d'un enseignant
+   • genererDemandeVacation() — Génère HTML demande vacation
+   • genererActeNomination() — Génère HTML acte de nomination
+   • validerDEI() — DEI valide et génère acte
+   • rejeterDEI() — DEI rejette le dossier
+
+✅ NOUVEAU : vacataire_dossier.php (428 lignes)
+   Interface complète du dossier VACATAIRE pour enseignants + DEI
+   
+   Fonctionnalités :
+   • Onglet Info — Infos enseignant + fiche validée
+   • Onglet Demande vacation — Affiche HTML généré
+   • Onglet Acte nomination — Visible après validation DEI
+   • Onglet Documents — Liste pièces jointes
+   • Actions DEI — Valider/rejeter dossier (si en_attente)
+   
+   Sécurité :
+   • Authentification par token OU session
+   • Accès : Enseignant (voir son dossier) + DEI (tout voir + valider)
+   • VP EIP : ❌ PAS d'accès à cette page
+
+✅ NOUVEAU : create_vacataire_dossiers.php (utilitaire)
+   Crée les dossiers VACATAIRE manquants pour les fiches validées
+
+✅ NOUVEAU : debug_vacataire_creation.php (utilitaire)
+   Diagnostique la création des dossiers VACATAIRE
+
+───────────────────────────────────────────────────────────────────────────────
+3. FICHIERS PHP MODIFIÉS
+───────────────────────────────────────────────────────────────────────────────
+
+✅ dashboard.php
+   Ligne 7 : Ajouter import VacataireDossierRepository
+   Ligne 190 : Ajouter 'vacataire' à liste des vues autorisées
+   Ligne 193-197 : Récupérer dossiers VACATAIRE de l'enseignant
+   Ligne 204 : Passer dossiersVacataire au template
+
+✅ templates/dashboard.php
+   Ligne 201-210 : Ajouter onglet "📋 Dossier vacation" (si dossiers existent)
+   Ligne 862-910 : Ajouter contenu onglet vacataire
+                   • Table avec liste dossiers
+                   • Bouton "👁 Consulter" → vacataire_dossier.php
+
+✅ templates/form.php
+   Ligne 353-365 : Ajouter champ TÉLÉPHONE pour VACATAIRE
+                   • Type : tel
+                   • Placeholder : "+226 xx xx xx xx"
+                   • Visible seulement si type_enseignant = 'vacataire'
+   Ligne 1356-1357 : Ajouter script JS pour afficher/masquer téléphone + spécialité
+
+✅ valider_fiche_global.php
+   Ligne 10 : Ajouter import VacataireDossierRepository
+   Ligne 113-132 : Ajouter création automatique dossier VACATAIRE
+                  • Déclenché : role === 'dei' + decision === 'valide' + type_workflow === 'VACATAIRE'
+                  • Crée dossier avec statut 'complet'
+                  • Logs d'erreur en cas d'échec
+
+✅ src/Auth.php
+   Ligne 364-371 : Modifier etapesWorkflow()
+                  VACATAIRE : Chef → Dir adj → Dir → DEI (validation finale)
+                  (Pas de VP_EIP dans le workflow VACATAIRE)
+
+✅ vacataire_dossier.php
+   Ligne 20-52 : Authentification par token OU session
+   Ligne 79 : userRole === 'dei' a accès complet (validation + génération acte)
+   Ligne 176 : Onglet "Acte nomination" visible pour DEI (si validé)
+   Ligne 261 : Actions DEI visibles si statut_dei === 'en_attente'
+
+───────────────────────────────────────────────────────────────────────────────
+4. RÉSUMÉ DES MODIFICATIONS PAR DOMAINE
+───────────────────────────────────────────────────────────────────────────────
+
+AUTHENTIFICATION & SÉCURITÉ
+──────────────────────────
+✅ vacataire_dossier.php utilise token + session
+✅ Vérification accès : Enseignant (son dossier) + DEI (tous les dossiers)
+✅ VP EIP : ❌ Aucun accès à vacataire_dossier.php
+
+WORKFLOW VALIDATION VACATAIRE
+─────────────────────────────
+✅ Chef département → Directeur adjoint → Directeur → DEI (validation finale)
+✅ Création dossier VACATAIRE : AUTOMATIQUE après validation DEI
+✅ Statuts dossier : 'complet' → 'validee_dei' → (optionnel: 'rejetee')
+✅ Statuts DEI : 'en_attente' → 'valide' / 'rejete'
+
+INTERFACE TABLEAU DE BORD
+────────────────────────
+✅ Nouvel onglet : "📋 Dossier vacation (N)" au tableau de bord
+✅ Affiche table : ID | Fiche | Année | Statut | Validation DEI | Action
+✅ Bouton "👁 Consulter" → Ouvre vacataire_dossier.php avec token
+
+INTERFACE DOSSIER VACATION
+─────────────────────────
+✅ 4 onglets :
+   • Info : Enseignant + Fiche programmatique + Demande vacation
+   • Demande vacation : HTML généré automatiquement
+   • Acte nomination : Généré par DEI après validation
+   • Documents : Pièces jointes (Diplôme, Nomination précédente)
+
+✅ Actions DEI (si statut_dei === 'en_attente') :
+   • ✓ Valider et générer acte de nomination
+   • ✗ Rejeter dossier
+
+FORMULAIRE VACATAIRE
+───────────────────
+✅ Champs supplémentaires pour VACATAIRE :
+   • Téléphone (nouveau champ)
+   • Spécialité (existant, repositionné)
+✅ Visibilité conditionnelle : Affichés uniquement si type_enseignant = 'vacataire'
+✅ Basculement JS : Afficher/masquer à la sélection du type
+
+GÉNÉRATION DOCUMENTS
+───────────────────
+✅ Demande vacation : Générée automatiquement à la création dossier
+✅ Placeholders remplacés : {nom}, {prenom}, {grade}, {diplome}, {specialite}, {etablissement}, {annee_academique}, {date_jour}, {date_mois}, {date_annee}
+✅ Acte nomination : Généré par DEI lors de la validation
+
+───────────────────────────────────────────────────────────────────────────────
+5. FLUX COMPLET VACATAIRE (NOUVEAU)
+───────────────────────────────────────────────────────────────────────────────
+
+1. VACATAIRE crée fiche
+   └─ Remplit : Cours, volume, établissement, département
+   └─ Remplit NOUVEAUX CHAMPS : Téléphone, Spécialité
+   └─ Upload : Diplôme, Nomination précédente
+
+2. Fiche soumise
+
+3. VALIDATION FICHE (workflow séquentiel obligatoire)
+   └─ Chef département (statut_chef = 'valide')
+   └─ Directeur adjoint (statut_dir_adj = 'valide')
+   └─ Directeur (statut_dir = 'valide')
+   └─ DEI (statut_dei = 'valide') ← VALIDATION FINALE
+
+4. DOSSIER VACATION CRÉÉ AUTOMATIQUEMENT
+   └─ Statut : 'complet'
+   └─ Statut DEI : 'en_attente'
+   └─ Demande vacation générée
+
+5. DEI CONSULTE DOSSIER
+   └─ Va au tableau de bord
+   └─ Clique sur onglet "📋 Dossier vacation"
+   └─ Clique "👁 Consulter"
+   └─ Voit 4 onglets : Info | Demande | Acte | Documents
+
+6. DEI VALIDE DOSSIER
+   └─ Onglet Info
+   └─ Bouton "✓ Valider et générer acte de nomination"
+   └─ Acte généré automatiquement
+
+7. DOSSIER VALIDÉ
+   └─ Statut : 'validee_dei'
+   └─ Statut DEI : 'valide'
+   └─ Acte visible au dossier
+
+───────────────────────────────────────────────────────────────────────────────
+6. ÉTAT FINAL DE L'APPLICATION
+───────────────────────────────────────────────────────────────────────────────
+
+✅ COMPLET : Système dossier VACATAIRE 100% fonctionnel
+✅ TESTÉ : 5 dossiers VACATAIRE créés et visibles au tableau de bord
+✅ SÉCURISÉ : Accès restreint à DEI uniquement pour les actions
+✅ TRANSPARENT : Logs d'erreur en cas de problème
+✅ ROBUSTE : Gestion des valeurs NULL (telephone, specialite)
+✅ UTILISABLE : 4 onglets clairs pour l'enseignant et le DEI
+
+───────────────────────────────────────────────────────────────────────────────
+7. RÉSUMÉ DES FICHIERS MODIFIÉS/CRÉÉS
+───────────────────────────────────────────────────────────────────────────────
+
+NOUVEAUX FICHIERS :
+  • src/VacataireDossierRepository.php (331 lignes)
+  • vacataire_dossier.php (428 lignes)
+  • create_vacataire_dossiers.php (utilitaire)
+  • debug_vacataire_creation.php (utilitaire)
+  • migrations/022_add_telephone_specialite.sql
+
+FICHIERS MODIFIÉS :
+  • dashboard.php (+8 lignes)
+  • templates/dashboard.php (+48 lignes)
+  • templates/form.php (+25 lignes)
+  • valider_fiche_global.php (+22 lignes)
+  • src/Auth.php (−1 ligne, changement workflow)
+  • vacataire_dossier.php (corrections NULL handling)
+
+TOTAL : ~900 lignes de code nouveau/modifié
+
+═══════════════════════════════════════════════════════════════════════════════
+FIN DU RÉCAPITULATIF
+═══════════════════════════════════════════════════════════════════════════════

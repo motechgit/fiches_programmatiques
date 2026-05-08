@@ -239,6 +239,7 @@ ob_start();
     <a href="admin_enseignants.php"  class="btn btn-sm" style="background:rgba(255,255,255,.15);color:#fff;border-color:rgba(255,255,255,.4)">Enseignants</a>
     <a href="admin.php?export=csv"   class="btn btn-sm btn-gold">⬇ CSV</a>
     <a href="admin_audit.php"        class="btn btn-sm" style="background:rgba(255,255,255,.15);color:#fff;border-color:rgba(255,255,255,.4)">Audit</a>
+    <a href="admin_acte_modeles.php" class="btn btn-sm" style="background:rgba(255,255,255,.15);color:#fff;border-color:rgba(255,255,255,.4)">📄 Modèle Acte</a>
     <a href="admin_password.php"     class="btn btn-sm" style="background:rgba(255,255,255,.15);color:#fff;border-color:rgba(255,255,255,.4)">🔑</a>
     <a href="admin.php?logout=1"     class="btn btn-sm" style="background:rgba(255,255,255,.15);color:#fff;border-color:rgba(255,255,255,.4)">Déconnexion</a>
   </div>

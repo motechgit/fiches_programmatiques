@@ -33,6 +33,7 @@ class FicheRepository
                      volume_statutaire=?, abattement=?, motif_abattement=?,
                      volume_apres_abatt=?, etab_rattachement=?, etab_administratif=?,
                      etab_beneficiaire=?, mois_execution=?, token=?,
+                     telephone=?, specialite=?,
                      fichier_diplome=IF(?<>'',?,fichier_diplome),
                      fichier_nomination=IF(?<>'',?,fichier_nomination)
                  WHERE matricule=?"
@@ -53,6 +54,8 @@ class FicheRepository
                 $extra['etab_beneficiaire']  ?? '',
                 $extra['mois_execution']     ?? '',
                 $token,
+                $extra['telephone']          ?? '',
+                $extra['specialite']         ?? '',
                 $extra['fichier_diplome']    ?? '', $extra['fichier_diplome']    ?? '',
                 $extra['fichier_nomination'] ?? '', $extra['fichier_nomination'] ?? '',
                 strtoupper(trim($matricule)),
@@ -66,8 +69,9 @@ class FicheRepository
               type_enseignant,grade,date_nomination,
               volume_statutaire,abattement,motif_abattement,
               volume_apres_abatt,etab_rattachement,etab_administratif,
-              etab_beneficiaire,mois_execution,fichier_diplome,fichier_nomination)
-             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+              etab_beneficiaire,mois_execution,telephone,specialite,
+              fichier_diplome,fichier_nomination)
+             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
         )->execute([
             strtoupper(trim($matricule)), $nom,
             $extra['prenom']              ?? '',
@@ -84,6 +88,8 @@ class FicheRepository
             $extra['etab_administratif'] ?? '',
             $extra['etab_beneficiaire']  ?? '',
             $extra['mois_execution']     ?? '',
+            $extra['telephone']          ?? '',
+            $extra['specialite']         ?? '',
             $extra['fichier_diplome']    ?? '',
             $extra['fichier_nomination'] ?? '',
         ]);

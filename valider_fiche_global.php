@@ -12,6 +12,7 @@ if (!class_exists('App')) require_once __DIR__ . '/src/App.php';
 App::configureErrorDisplay();
 require_once __DIR__ . '/src/Auth.php';
 require_once __DIR__ . '/src/ValidationRepository.php';
+require_once __DIR__ . '/src/VacataireDossierRepository.php';
 require_once __DIR__ . '/src/Mailer.php';
 
 $config   = require __DIR__ . '/config/security.php';
@@ -66,9 +67,8 @@ $stmt = $pdo->prepare(
      FROM fiches f
      JOIN enseignants e ON e.id = f.enseignant_id
      WHERE f.enseignant_id = ? AND f.annee_academique = ?
-       AND f.is_encadrement = 0
        $sw
-     ORDER BY f.semestre, f.id"
+     ORDER BY f.is_encadrement ASC, f.semestre, f.id"
 );
 $stmt->execute(array_merge([$ensId, $annee ?: $config['annee_academique']], $sp));
 $fiches = $stmt->fetchAll();
@@ -107,6 +107,28 @@ foreach ($fiches as $fiche) {
 
     $repo->enregistrerDecision((int)$fiche['id'], $userId, $role, $decision, $motif);
     $nbTraitees++;
+    
+    // ════════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════════════════
+    // CRÉATION AUTOMATIQUE DOSSIER VACATAIRE
+    // Après validation DEI (validation finale pour type VACATAIRE)
+    // ════════════════════════════════════════════════════════════
+    if ($role === 'dei' && $decision === 'valide' && 
+        ($fiche['type_workflow'] ?? '') === 'VACATAIRE') {
+        
+        try {
+            $vacatRepo = new VacataireDossierRepository($pdo);
+            $dossierId = $vacatRepo->createDossierAfterValidation(
+                (int)$fiche['id'],
+                (int)$fiche['enseignant_id']
+            );
+            
+            // Log création dossier
+            error_log("✅ Dossier VACATAIRE créé : ID=$dossierId pour fiche={$fiche['id']}");
+        } catch (Exception $e) {
+            error_log("⚠️ Erreur création dossier VACATAIRE : " . $e->getMessage());
+        }
+    }
 
     // Garder infos pour la notification mail (une seule fois)
     if (empty($ensEmail)) {

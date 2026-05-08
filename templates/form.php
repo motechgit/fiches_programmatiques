@@ -318,7 +318,7 @@ $encData    = $ligneEnc[0] ?? ['volume_cm'=>0,'semestre'=>'S1'];
       </div>
     </div>
 
-    <!-- Grade | Date de nomination -->
+    <!-- Grade | Date de nomination | Année académique -->
     <div style="display:flex;flex-wrap:wrap;gap:4px 16px;margin-bottom:5px;align-items:baseline">
       <div style="display:flex;align-items:center;gap:4px;min-width:260px">
         <label style="font-weight:700;white-space:nowrap;margin:0">Grade :</label>
@@ -338,6 +338,43 @@ $encData    = $ligneEnc[0] ?? ['volume_cm'=>0,'semestre'=>'S1'];
                value="<?= $e($old['date_nomination']??'') ?>"
                style="border:none;border-bottom:1px solid #999;
                       font-size:10pt;padding:1px 4px;outline:none">
+      </div>
+      <div style="display:flex;align-items:center;gap:4px;min-width:220px">
+        <label style="font-weight:700;white-space:nowrap;margin:0">Année académique :</label>
+        <input type="text" name="annee_academique"
+               value="<?= $e($old['annee_academique'] ?? $config['annee_academique'] ?? '2024-2025') ?>"
+               placeholder="ex: 2024-2025"
+               style="border:none;border-bottom:1px solid #999;
+                      font-size:10pt;padding:1px 4px;width:120px;outline:none;font-weight:700"
+               required>
+      </div>
+    </div>
+
+    <!-- Téléphone — uniquement pour VACATAIRE -->
+    <div id="bloc_vacataire_telephone" style="<?= !$isVac ? 'display:none' : '' ?>">
+      <div style="display:flex;flex-wrap:wrap;gap:4px 16px;margin-bottom:5px;align-items:baseline">
+        <div style="display:flex;align-items:center;gap:4px;flex:1;min-width:300px">
+          <label style="font-weight:700;white-space:nowrap;margin:0">Téléphone :</label>
+          <input type="tel" name="telephone"
+                 value="<?= $e($old['telephone']??'') ?>"
+                 placeholder="Ex : +226 xx xx xx xx" maxlength="20"
+                 style="border:none;border-bottom:1px solid #999;
+                        font-size:10pt;padding:1px 4px;flex:1;outline:none">
+        </div>
+      </div>
+    </div>
+
+    <!-- Spécialité — uniquement pour VACATAIRE -->
+    <div id="bloc_vacataire_specialite" style="<?= !$isVac ? 'display:none' : '' ?>">
+      <div style="display:flex;flex-wrap:wrap;gap:4px 16px;margin-bottom:5px;align-items:baseline">
+        <div style="display:flex;align-items:center;gap:4px;flex:1;min-width:300px">
+          <label style="font-weight:700;white-space:nowrap;margin:0">Spécialité de l'enseignant :</label>
+          <input type="text" name="specialite"
+                 value="<?= $e($old['specialite']??'') ?>"
+                 placeholder="Ex : Mathématiques, Informatique, Physique" maxlength="255"
+                 style="border:none;border-bottom:1px solid #999;
+                        font-size:10pt;padding:1px 4px;flex:1;outline:none">
+        </div>
       </div>
     </div>
 
@@ -745,7 +782,7 @@ $encData    = $ligneEnc[0] ?? ['volume_cm'=>0,'semestre'=>'S1'];
         <tr id="sep-enc" style="background:#f0eefc">
           <td colspan="11" style="border:1px solid #aaa;padding:4px 8px;font-weight:700;
                                   font-style:italic;font-size:11px;color:#4a3a8f">
-            ▼ Encadrement de doctorat / Thèses
+            ▼ Encadrement
             <span style="float:right;display:flex;gap:4px">
               <button type="button" onclick="ajouterEncadrement()" id="btn-enc"
                       style="background:#4a3a8f;color:#fff;border:none;
@@ -861,7 +898,8 @@ $encData    = $ligneEnc[0] ?? ['volume_cm'=>0,'semestre'=>'S1'];
 foreach (['matricule','nom','prenom','diplome','departement','email','type_enseignant','grade',
           'date_nomination','volume_statutaire','abattement','motif_abattement',
           'volume_apres_abatt','etab_rattachement','etab_administratif','etab_beneficiaire',
-          'mois_execution','fichier_diplome','fichier_nomination'] as $k):
+          'mois_execution','fichier_diplome','fichier_nomination',
+          'annee_academique','telephone','specialite'] as $k):
 ?>
 <input type="hidden" name="<?= $k ?>" value="<?= $e($old[$k]??'') ?>">
 <?php endforeach; ?>
@@ -1066,7 +1104,7 @@ $renderLigne = function(int $num, array $l) use ($tdB, $tdBC, $e): string {
     $enc = !empty($l['is_encadrement']);
     $code_v = $enc ? ($l['code'] ?: '—') : $e($l['code']??'');
     $ue_v   = $enc
-        ? '<em style="color:#555">'.$e($l['cours']??'Encadrement de doctorat/thèses').'</em>'
+        ? '<em style="color:#555">'.$e($l['cours']??'Encadrement').'</em>'
         : $e($l['cours']??'');
     $num_v  = $enc ? '<em style="font-size:10px;color:#666">Enc.</em>' : (string)$num;
     $ntc_v  = $enc ? '—' : $e($l['ntc']??'');
@@ -1119,7 +1157,7 @@ $renderLigne = function(int $num, array $l) use ($tdB, $tdBC, $e): string {
       <?php if ($sEnc): ?>
       <tr style="background:#f0eefc">
         <td colspan="8" style="border:1px solid #000;padding:4px;text-align:center;font-weight:700;font-style:italic;font-size:9pt">
-          Encadrement de doctorat / Thèses
+          Encadrement
         </td>
       </tr>
       <?php $cnt=0; foreach ($sEnc as $l): echo $renderLigne(++$cnt, $l); endforeach; ?>
@@ -1315,6 +1353,11 @@ function toggleTypeEns(val) {
     // Masquer ligne heures sup si vacataire
     var trHsVac = document.getElementById("tr-heures-sup");
     if (trHsVac) trHsVac.style.display = vac ? "none" : (IS_UJKZ ? "" : "none");
+    // ✅ Afficher/masquer champs Téléphone et Spécialité pour vacataire
+    var bvt = document.getElementById("bloc_vacataire_telephone");
+    if (bvt) bvt.style.display = vac ? "" : "none";
+    var bvs = document.getElementById("bloc_vacataire_specialite");
+    if (bvs) bvs.style.display = vac ? "" : "none";
     var champ = document.getElementById("champ-matricule");
     var hint  = document.getElementById("hint-matricule");
     if (!champ) return;

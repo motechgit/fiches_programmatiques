@@ -1,12 +1,7 @@
 <?php
-// ============================================================
-// config/database.php — Connexion MySQL
-// WampServer : hôte 127.0.0.1, utilisateur root, pas de mdp
-// ============================================================
 declare(strict_types=1);
-
 return [
-    'host'     => '127.0.0.1',
+    'host'     => 'localhost',
     'port'     => '3306',
     'dbname'   => 'fiches_programmatiques',
     'username' => 'root',

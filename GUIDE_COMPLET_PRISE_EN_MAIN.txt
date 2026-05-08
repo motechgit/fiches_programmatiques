@@ -1,0 +1,542 @@
+═══════════════════════════════════════════════════════════════════════════════
+  FICHES PROGRAMMATIQUES UJKZ
+  DOCUMENTATION COMPLÈTE — GUIDE DE PRISE EN MAIN
+═══════════════════════════════════════════════════════════════════════════════
+
+TABLE DES MATIÈRES
+──────────────────
+1. Architecture générale
+2. Structure des fichiers
+3. Flux de données
+4. Base de données
+5. Rôles et permissions
+6. Workflow des fiches (VACATAIRE)
+7. Système d'authentification
+8. Comment ajouter une fonctionnalité
+9. Débogage et logs
+10. Checklist déploiement
+
+
+═══════════════════════════════════════════════════════════════════════════════
+1. ARCHITECTURE GÉNÉRALE
+═══════════════════════════════════════════════════════════════════════════════
+
+STACK TECHNIQUE
+────────────────
+• Backend : PHP 7.1+
+• BD : MySQL 5.7+
+• Serveur : WampServer
+• Authentification : Token + Session
+
+CONTRAINTES IMPORTANTES
+────────────────────────
+✅ PHP 7.1 compatible — JAMAIS utiliser :
+   ❌ match() statement (PHP 8.0+)
+   ❌ fn() arrow functions (PHP 7.4+)
+   ❌ str_contains() (PHP 8.0+)
+   ❌ ADD COLUMN IF NOT EXISTS (MySQL — utiliser ALTER TABLE simple)
+
+✅ Toujours TESTER avant de déployer en production
+
+CONVENTIONS
+───────────
+• CamelCase pour les noms de classe
+• snake_case pour les noms de fichiers/fonctions
+• Français pour les interfaces, anglais pour les commentaires techniques
+• ISO 8601 pour les dates (YYYY-MM-DD)
+
+
+═══════════════════════════════════════════════════════════════════════════════
+2. STRUCTURE DES FICHIERS
+═══════════════════════════════════════════════════════════════════════════════
+
+fiches_programmatiques/
+│
+├─ index.php                          Contrôleur principal : soumission/modification fiches
+├─ dashboard.php                      Contrôleur : tableau de bord enseignant
+├─ vacataire_dossier.php             Contrôleur : affichage dossier vacation
+├─ valider_fiche_global.php          Contrôleur : validation fiches
+│
+├─ templates/
+│  ├─ dashboard.php                  Template : tableau de bord (4 onglets)
+│  ├─ form.php                       Template : formulaire saisie fiche
+│  ├─ fiche_suivi.php               Template : fiche de suivi (obsolète)
+│
+├─ src/
+│  ├─ Database.php                   Singleton PDO (connexion BD)
+│  ├─ Auth.php                       Authentification + rôles + workflows
+│  ├─ Security.php                   Sécurité : headers, session
+│  ├─ App.php                        Utilitaires globales
+│  ├─ FicheRepository.php            DAO : Fiches programmatiques
+│  ├─ ValidationRepository.php       DAO : Validations (workflow)
+│  ├─ VacataireDossierRepository.php DAO : Dossiers vacation (NOUVEAU)
+│  └─ Mailer.php                     Email notifications
+│
+├─ config/
+│  ├─ security.php                   Config sécurité
+│
+├─ migrations/
+│  ├─ 001_initial_schema.sql         Schéma initial
+│  ├─ ...
+│  └─ 022_add_telephone_specialite.sql   Nouvelles colonnes (à exécuter)
+│
+├─ css/
+│  └─ style.css                      Styles (minimalistes)
+│
+└─ public/ (uploads, données)
+
+
+═══════════════════════════════════════════════════════════════════════════════
+3. FLUX DE DONNÉES
+═══════════════════════════════════════════════════════════════════════════════
+
+CYCLE DE VIE D'UNE FICHE VACATAIRE
+──────────────────────────────────
+
+1. CRÉATION (index.php)
+   ├─ Formulaire multi-étape (step1 → step2 → submit)
+   ├─ FicheRepository::createFiche() crée la fiche
+   ├─ Génère : numéro unique (FP-YYYY-MMMM-####) + QR code
+   └─ Sauvegarde : enseignant_id, type_workflow='VACATAIRE', statuts = 'en_attente'
+
+2. MODIFICATION (index.php)
+   ├─ Récupère fiche existante via $_POST['_fiche_id']
+   ├─ FicheRepository::updateFiche() met à jour
+   └─ Préserve : numéro fiche + QR code
+
+3. VALIDATION (valider_fiche_global.php)
+   ├─ Chef département → statut_chef = 'valide'
+   ├─ Directeur adjoint → statut_dir_adj = 'valide'
+   ├─ Directeur → statut_dir = 'valide'
+   └─ DEI → statut_dei = 'valide'
+      └─ Déclenche : VacataireDossierRepository::createDossierAfterValidation()
+         └─ Crée dossier vacation avec statut='complet'
+
+4. DOSSIER VACATION (vacataire_dossier.php)
+   ├─ DEI consulte dossier
+   ├─ Voit 4 onglets : Info | Demande vacation | Acte nomination | Documents
+   └─ Actions :
+      ├─ Valider → statut_dei='valide' + génère acte
+      └─ Rejeter → statut_dei='rejete'
+
+FLUX DONNÉES → BASE DE DONNÉES
+──────────────────────────────
+
+Table fiches (principale)
+  ├─ id, enseignant_id, type_workflow, numero_fiche, qrcode_token
+  ├─ cours, code, semestre, volume_cm/td/tp
+  ├─ etab_beneficiaire_fiche, dept_beneficiaire_fiche, annee_academique
+  ├─ statut_chef, statut_dir_adj, statut_dir, statut_dei, statut_vp_eip
+  └─ submitted_at, updated_at, nb_modifications
+
+Table enseignants
+  ├─ id, matricule, nom, prenom, email
+  ├─ diplome, grade, telephone (NOUVEAU), specialite (NOUVEAU)
+  └─ departement, etab_administratif
+
+Table vacataire_dossier (NOUVEAU)
+  ├─ id, fiche_id, enseignant_id
+  ├─ statut_dossier ('complet', 'validee_dei', 'rejetee')
+  ├─ statut_dei ('en_attente', 'valide', 'rejete')
+  ├─ demande_vacation_html, acte_nomination_html
+  ├─ created_at, validated_by_dei_at
+  └─ demande_vacation_html — HTML généré avec placeholders remplacés
+
+Table vacataire_dossier_documents (NOUVEAU)
+  ├─ id, dossier_id
+  ├─ type ('diplome', 'nomination_precedente', 'autre')
+  ├─ nom_fichier, chemin_fichier, taille_ko
+  └─ uploaded_at
+
+
+═══════════════════════════════════════════════════════════════════════════════
+4. BASE DE DONNÉES
+═══════════════════════════════════════════════════════════════════════════════
+
+ACCÈS PHPMYADMIN
+────────────────
+URL : http://127.0.0.1/phpmyadmin
+Base : fiches_programmatiques (ou fiches_ujkz)
+
+COLONNES ESSENTIELLES À CONNAÎTRE
+──────────────────────────────────
+
+fiches.type_workflow
+  ├─ 'IESR_UJKZ'     → Enseignant établissement UJKZ
+  ├─ 'IESR_HORS'     → Enseignant établissement hors UJKZ
+  └─ 'VACATAIRE'     → Vacataire (NOUVEAU)
+
+fiches.statut_*
+  ├─ statut_chef      → Validation chef département
+  ├─ statut_dir_adj   → Validation directeur adjoint
+  ├─ statut_dir       → Validation directeur
+  ├─ statut_dei       → Validation DEI (finale pour VACATAIRE)
+  └─ statut_vp_eip    → Validation VP EIP
+  
+  Valeurs possibles :
+    • 'en_attente'     → Non validé
+    • 'valide'         → Validé
+    • 'rejete'         → Rejeté
+    • 'absent'         → Non applicable pour ce rôle
+
+vacataire_dossier.statut_dei
+  ├─ 'en_attente'     → DEI n'a pas encore validé
+  ├─ 'valide'         → DEI a validé + acte généré
+  └─ 'rejete'         → DEI a rejeté
+
+QUERIES UTILES POUR DÉBOGUER
+─────────────────────────────
+
+-- Voir toutes les fiches VACATAIRE
+SELECT id, enseignant_id, numero_fiche, statut_dei FROM fiches 
+WHERE type_workflow = 'VACATAIRE' ORDER BY id DESC;
+
+-- Voir tous les dossiers vacation
+SELECT id, fiche_id, statut_dossier, statut_dei FROM vacataire_dossier 
+ORDER BY id DESC;
+
+-- Voir les dossiers en attente de validation DEI
+SELECT d.*, e.nom, e.prenom FROM vacataire_dossier d
+JOIN enseignants e ON d.enseignant_id = e.id
+WHERE d.statut_dei = 'en_attente' ORDER BY d.created_at;
+
+-- Vérifier colonne téléphone
+DESC enseignants;
+-- Doit montrer : telephone VARCHAR(20)
+
+
+═══════════════════════════════════════════════════════════════════════════════
+5. RÔLES ET PERMISSIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+RÔLES DANS LE SYSTÈME
+─────────────────────
+
+1. ENSEIGNANT (token)
+   ├─ Créer/modifier ses propres fiches programmatiques
+   ├─ Voir ses fiches validées
+   ├─ Uploader ses preuves (pour suivi)
+   ├─ Voir ses propres dossiers vacation
+   └─ ❌ JAMAIS valider
+
+2. CHEF DÉPARTEMENT (session, user_role='chef_dept')
+   ├─ Voir fiches de son département
+   └─ Valider fiches → statut_chef = 'valide'
+
+3. DIRECTEUR ADJOINT (session, user_role='directeur_adjoint')
+   ├─ Voir fiches de son établissement
+   └─ Valider fiches → statut_dir_adj = 'valide'
+
+4. DIRECTEUR (session, user_role='directeur')
+   ├─ Voir fiches de son établissement
+   └─ Valider fiches → statut_dir = 'valide'
+
+5. DEI (session, user_role='dei')
+   ├─ Voir TOUTES les fiches (tous établissements)
+   ├─ Valider fiches → statut_dei = 'valide'
+   ├─ Voir TOUS les dossiers vacation (onglet au dashboard)
+   ├─ Valider dossier vacation → crée acte nomination
+   └─ ⭐ SEUL autorisé à générer acte de nomination
+
+6. VP EIP (session, user_role='vp_eip')
+   ├─ Voir fiches (lecture seule probablement)
+   └─ ❌ Pas d'actions sur dossier vacation
+
+COMMENT VÉRIFIER LE RÔLE
+────────────────────────
+
+En PHP :
+  $userRole = $_SESSION['user_role'] ?? '';
+  if ($userRole === 'dei') { ... }
+
+En JS :
+  // Utiliser des data-* attributes :
+  <button data-role="dei">Action DEI</button>
+  // Puis jQuery/vanilla JS pour afficher/masquer
+
+Méthode statique dans Auth.php :
+  Auth::isDei()            → true si DEI
+  Auth::isEnseignant()     → true si enseignant (token)
+  etc.
+
+
+═══════════════════════════════════════════════════════════════════════════════
+6. WORKFLOW DES FICHES (VACATAIRE)
+═══════════════════════════════════════════════════════════════════════════════
+
+ÉTAPES OBLIGATOIRES (SÉQUENTIELLES)
+───────────────────────────────────
+
+La validation DOIT se faire dans cet ordre :
+
+1️⃣  CHEF DÉPARTEMENT valide
+    └─ Clique sur "✓ Valider" au dashboard
+    └─ Appelle : ValidationRepository::enregistrerDecision(..., 'chef_dept', 'valide')
+    └─ Met à jour : fiches.statut_chef = 'valide'
+
+2️⃣  DIRECTEUR ADJOINT valide (seulement si chef a validé)
+    └─ ValidationRepository vérifie : fiches.statut_chef = 'valide' avant d'autoriser
+    └─ Met à jour : fiches.statut_dir_adj = 'valide'
+
+3️⃣  DIRECTEUR valide (seulement si dir_adj a validé)
+    └─ Idem
+    └─ Met à jour : fiches.statut_dir = 'valide'
+
+4️⃣  DEI VALIDE (seulement si directeur a validé) ← VALIDATION FINALE
+    └─ Met à jour : fiches.statut_dei = 'valide'
+    └─ **DÉCLENCHE** :
+       VacataireDossierRepository::createDossierAfterValidation()
+       ├─ Crée vacataire_dossier (statut='complet')
+       ├─ Génère demande_vacation_html
+       └─ Définit statut_dei='en_attente'
+
+REMARQUES IMPORTANTES
+─────────────────────
+✅ Si quelqu'un clique "Rejeter" à n'importe quelle étape → tout s'arrête
+✅ La validation doit être fait par les bonnes personnes (vérification Auth)
+✅ Les étapes PRÉCÉDENTES doivent être validées (vérification BD)
+
+CODE POUR VALIDER
+─────────────────
+Dans valider_fiche_global.php, ligne ~80-110 :
+
+foreach ($fiches_selectionnees as $ficheId) {
+    // 1. Récupérer la fiche
+    $fiche = $ficheRepo->getFicheById($ficheId);
+    
+    // 2. Vérifier les étapes précédentes
+    // (ValidationRepository le fait)
+    
+    // 3. Enregistrer la décision
+    $repo->enregistrerDecision($ficheId, $userId, $role, $decision, $motif);
+    
+    // 4. Si VACATAIRE + DEI + valide → créer dossier
+    if ($role === 'dei' && $decision === 'valide' && 
+        $fiche['type_workflow'] === 'VACATAIRE') {
+        $vacatRepo->createDossierAfterValidation($ficheId, ...);
+    }
+}
+
+
+═══════════════════════════════════════════════════════════════════════════════
+7. SYSTÈME D'AUTHENTIFICATION
+═══════════════════════════════════════════════════════════════════════════════
+
+DEUX MÉCANISMES
+───────────────
+
+A. TOKEN (pour les enseignants)
+   ├─ Généré automatiquement : qrcode_token dans fiches
+   ├─ Envoyé par email : http://127.0.0.1/.../dashboard.php?token=abc123...
+   ├─ Hash SHA256 (64 caractères hex)
+   ├─ Valide indéfiniment (tant qu'enseignant existe)
+   └─ Pas de session serveur créée
+
+B. SESSION (pour les rôles : chef_dept, dei, etc.)
+   ├─ Login/password classique
+   ├─ Crée $_SESSION['user_id'] et $_SESSION['user_role']
+   ├─ Cookie serveur (PHPSESSID)
+   └─ Expire après inactivité
+
+CODE POUR VÉRIFIER AUTHENTIFICATION
+───────────────────────────────────
+
+// Vérifier si connecté (session OU token valide)
+if (Auth::check()) {
+    $userId = Auth::userId();        // ID de l'utilisateur
+    $userRole = Auth::userRole();    // 'dei', 'chef_dept', '', etc.
+}
+
+// Vérifier le rôle spécifique
+if (Auth::isDei()) { ... }
+
+// Dans vacataire_dossier.php
+$userRole = $_SESSION['user_role'] ?? '';  // Récupérer directement
+if ($userRole === 'dei') {  // DEI uniquement
+    // Montrer les boutons de validation
+}
+
+
+═══════════════════════════════════════════════════════════════════════════════
+8. COMMENT AJOUTER UNE FONCTIONNALITÉ
+═══════════════════════════════════════════════════════════════════════════════
+
+SCÉNARIO : Ajouter un champ "Nombre d'étudiants" aux fiches VACATAIRE
+
+ÉTAPE 1 : MIGRATION BD
+───────────────────────
+Créer : migrations/023_add_nombre_etudiants.sql
+
+ALTER TABLE `fiches`
+ADD COLUMN `nombre_etudiants` INT DEFAULT 0
+COMMENT 'Nombre d\'étudiants pour cette fiche';
+
+Exécuter dans PhpMyAdmin.
+
+ÉTAPE 2 : FORMULAIRE
+─────────────────────
+Dans templates/form.php, après le champ "Spécialité" :
+
+<!-- Nombre d'étudiants — uniquement pour VACATAIRE -->
+<div id="bloc_vacataire_nb_etudiants" style="<?= !$isVac ? 'display:none' : '' ?>">
+  <label>Nombre d'étudiants :</label>
+  <input type="number" name="nombre_etudiants"
+         value="<?= (int)($old['nombre_etudiants']??0) ?>"
+         min="0" max="999">
+</div>
+
+Ajouter le script JS pour afficher/masquer :
+
+var bvne = document.getElementById("bloc_vacataire_nb_etudiants");
+if (bvne) bvne.style.display = vac ? "" : "none";
+
+ÉTAPE 3 : SAUVEGARDER DANS BD
+──────────────────────────────
+Dans index.php, ligne ~885, ajouter à foreach :
+
+foreach (['matricule','nom','prenom',...,'nombre_etudiants'] as $field) {
+    // ...
+}
+
+ÉTAPE 4 : AFFICHER AU DASHBOARD
+────────────────────────────────
+Dans templates/dashboard.php, ajouter à la ligne des infos :
+
+<div class="info-item">
+  <label>Nombre d'étudiants</label>
+  <div><?= (int)($fiche['nombre_etudiants']??0) ?></div>
+</div>
+
+ÉTAPE 5 : AFFICHER AU DOSSIER VACATION
+───────────────────────────────────────
+Dans vacataire_dossier.php, onglet Info :
+
+<div class="info-item">
+  <label>Nombre d'étudiants</label>
+  <div><?= (int)($dossier['nombre_etudiants']??0) ?></div>
+</div>
+
+ÉTAPE 6 : TESTER ET DÉPLOYER
+─────────────────────────────
+1. Exécuter la migration BD
+2. Redéployer les fichiers PHP
+3. Redémarrer WampServer
+4. Vider le cache du navigateur
+5. Tester : créer fiche VACATAIRE → saisir nombre → vérifier BD
+
+
+═══════════════════════════════════════════════════════════════════════════════
+9. DÉBOGAGE ET LOGS
+═══════════════════════════════════════════════════════════════════════════════
+
+FICHIERS LOGS
+─────────────
+• PHP error_log : C:\wamp64\logs\php_error.log
+• Logs applicatifs : error_log() dans le code
+
+COMMENT LOGUER
+──────────────
+error_log("✅ Dossier créé : ID=" . $dossierId);
+error_log("❌ Erreur : " . $e->getMessage());
+
+Puis consulter les logs :
+cat C:\wamp64\logs\php_error.log
+
+UTILITAIRES DE DEBUG
+────────────────────
+• debug_vacataire_creation.php → Diagnostique création dossiers
+• create_vacataire_dossiers.php → Crée les dossiers manquants
+
+Accès : http://127.0.0.1/fiches_programmatiques/debug_vacataire_creation.php
+
+AFFICHAGE ERREURS
+─────────────────
+En développement, les erreurs doivent s'afficher. Vérifier php.ini :
+
+display_errors = On
+error_reporting = E_ALL
+
+MESSAGES COURANTS
+─────────────────
+❌ "Champ X inconnu dans field list"
+   → Colonne n'existe pas en BD
+   → Solution : exécuter la migration
+
+❌ "SQLSTATE[42S22]"
+   → Même erreur (colonne manquante)
+
+❌ "Accès refusé"
+   → Vérification Auth échouée
+   → Vérifier token/session
+
+❌ "Dossier non trouvé"
+   → getDossier() retourne null
+   → Vérifier dossier_id en GET
+
+
+═══════════════════════════════════════════════════════════════════════════════
+10. CHECKLIST DÉPLOIEMENT
+═══════════════════════════════════════════════════════════════════════════════
+
+AVANT DE DÉPLOYER
+─────────────────
+☐ Tester sur local (WampServer)
+☐ Vérifier aucune erreur PHP (php_error.log vide)
+☐ Vérifier la BD (migrations appliquées)
+☐ Tester chaque rôle : enseignant, chef, dei, etc.
+☐ Vérifier que les données se sauvegardent correctement
+
+DÉPLOIEMENT
+───────────
+☐ 1. Arrêter WampServer (Stop All Services)
+☐ 2. Vider /fiches_programmatiques (rm -r *)
+☐ 3. Extraire le ZIP
+☐ 4. Exécuter les migrations BD manquantes (PhpMyAdmin)
+☐ 5. Redémarrer WampServer (Start All Services)
+☐ 6. Vider cache navigateur (Ctrl+Shift+Delete)
+☐ 7. Tester l'application
+
+APRÈS LE DÉPLOIEMENT
+────────────────────
+☐ Vérifier pas d'erreurs 403 ou 404
+☐ Vérifier les formulaires fonctionnent
+☐ Vérifier la BD a bien reçu les données
+☐ Vérifier les validations marchent
+☐ Vérifier les logs sont propres
+
+SI PROBLÈME
+───────────
+☐ Consulter php_error.log
+☐ Exécuter debug_vacataire_creation.php
+☐ Vérifier les colonnes BD existent
+☐ Redémarrer WampServer complètement
+
+
+═══════════════════════════════════════════════════════════════════════════════
+CONTACTS & RESSOURCES
+═══════════════════════════════════════════════════════════════════════════════
+
+UJKZ (Université Joseph KI-ZERBO)
+  → Lieu : Burkina Faso
+  → Système : Enseignement supérieur
+  → Objectif : Gérer les fiches programmatiques des enseignants
+
+CODE SOURCE
+  → Location : /home/claude/fiches_prod_complete/
+  → ZIP : /mnt/user-data/outputs/fiches_programmatiques_PRODUCTION.zip
+
+DOCUMENTATION
+  → MODIFICATIONS_RECAPITULATIF.txt
+  → CODE_EXTRAITS_DETAILLES.txt
+  → Ce fichier : Guide complet
+
+SUPPORT TECHNIQUE
+  → Base de données : PhpMyAdmin
+  → Serveur : WampServer
+  → Développement : PHP 7.1+
+  → Version BD : MySQL 5.7+
+
+
+═══════════════════════════════════════════════════════════════════════════════
+FIN DE LA DOCUMENTATION
+═══════════════════════════════════════════════════════════════════════════════

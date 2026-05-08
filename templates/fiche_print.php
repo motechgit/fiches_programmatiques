@@ -275,7 +275,7 @@ $cours = [
       <?php endif; ?>
 
       <?php if ($encFiches): ?>
-      <tr><td colspan="8" style="border:1px solid #000;padding:4px;text-align:center;font-weight:700;font-style:italic;font-size:9pt;background:#f0eefc">Encadrement de doctorat / Thèses</td></tr>
+      <tr><td colspan="8" style="border:1px solid #000;padding:4px;text-align:center;font-weight:700;font-style:italic;font-size:9pt;background:#f0eefc">Encadrement</td></tr>
       <?php $cnt=0; foreach ($encFiches as $f): echo renderFicheRow(++$cnt, $f, $e); endforeach; ?>
       <tr style="background:#dddaf5">
         <td colspan="5" style="border:1px solid #000;padding:4px;text-align:center;font-weight:700;font-size:9pt">TOTAL ENCADREMENT</td>

@@ -11,6 +11,8 @@ if (!class_exists('App')) require_once __DIR__ . '/src/App.php';
 App::configureErrorDisplay();
 require_once __DIR__ . '/src/FicheRepository.php';
 require_once __DIR__ . '/src/ValidationRepository.php';
+require_once __DIR__ . '/src/VacataireDossierRepository.php';
+require_once __DIR__ . '/src/DemandeVacationGenerator.php';
 require_once __DIR__ . '/src/Auth.php';
 
 $config   = require __DIR__ . '/config/security.php';
@@ -100,29 +102,50 @@ if (isset($_GET['fiche'])) {
 $fiches = $repo->getFichesByEnseignant((int)$enseignant['id']);
 $stats  = $repo->getStatsByEnseignant((int)$enseignant['id']);
 
-// Historique de TOUTES les fiches pour les signatures
-$historiqueGlobal = [];
+// ── DÉTACHER les fiches par établissement bénéficiaire ─────────
+// Si une fiche a des cours de différents établissements,
+// créer une fiche logique par établissement pour l'affichage
+$fiches = detacherFichesParlEtablissement($fiches);
+
+// Historique de validation PAR FICHE
+// Important : après détachement, charger les validations par fiche individuelle
+$historiqueParFiche = [];  // [fiche_id => [role => validation]]
 $pdo = Database::getInstance();
 if (!empty($fiches)) {
-    $ids = array_column($fiches, 'id');
-    $ph  = implode(',', array_fill(0, count($ids), '?'));
+    // Récupérer les IDs réels (y compris les fiches détachées qui partagent le même ID)
+    $idsUniques = array_unique(array_column($fiches, 'id'));
+    $ph  = implode(',', array_fill(0, count($idsUniques), '?'));
     $stH = $pdo->prepare(
         "SELECT v.fiche_id, v.role AS etape_role, v.decision, v.motif_rejet, v.created_at,
                 u.nom AS valideur_nom
          FROM validations_fiche v
          JOIN utilisateurs u ON u.id = v.utilisateur_id
          WHERE v.fiche_id IN ($ph)
-         ORDER BY v.created_at ASC"
+         ORDER BY v.fiche_id ASC, v.created_at ASC"
     );
-    $stH->execute($ids);
+    $stH->execute($idsUniques);
     foreach ($stH->fetchAll() as $h) {
-        // Utiliser v.role (étape de validation) comme clé, pas u.role
+        $fid = (int)$h['fiche_id'];
         $r = $h['etape_role'] ?? '';
-        // Garder la décision la plus récente par étape
-        if (!isset($historiqueGlobal[$r]) || $h['decision'] === 'valide') {
-            $historiqueGlobal[$r] = $h;
+        
+        // Initialiser le fiche si nécessaire
+        if (!isset($historiqueParFiche[$fid])) {
+            $historiqueParFiche[$fid] = [];
+        }
+        
+        // Garder la décision la plus récente par étape et fiche
+        if (!isset($historiqueParFiche[$fid][$r]) || $h['decision'] === 'valide') {
+            $historiqueParFiche[$fid][$r] = $h;
         }
     }
+}
+
+// Pour compatibilité avec le template, créer aussi $historiqueGlobal
+// (certains templates peuvent encore l'utiliser)
+$historiqueGlobal = [];
+if (!empty($fiches)) {
+    $ficheId = (int)($fiches[0]['id'] ?? 0);
+    $historiqueGlobal = $historiqueParFiche[$ficheId] ?? [];
 }
 
 // Nombre de preuves par fiche + données complètes pour onglets suivi
@@ -141,37 +164,130 @@ if (!empty($fiches)) {
         $preuvesCounts[$fid] = ($preuvesCounts[$fid] ?? 0) + 1;
         $preuvesByFiche[$fid][] = $row;
     }
-    // Fiches avec preuves groupées par semestre
+    // Fiches validées par DEI groupées par semestre (avec ou sans preuves)
+    // ATTENTION: La fiche s'affiche en suivi seulement si elle est validée par DEI
     foreach ($fiches as $f) {
         $fid = (int)$f['id'];
+        // Vérifier que la fiche est validée par le DEI
+        $isDeiValidee = ($f['statut_dei'] ?? '') === 'validee';
+        if (!$isDeiValidee) {
+            // Fiche pas validée par DEI → pas d'onglet suivi
+            continue;
+        }
+        $sem = $f['semestre'] ?? 'S1';
+        if (!isset($fichesAvecPreuves[$sem])) $fichesAvecPreuves[$sem] = [];
+        // Ajouter les preuves si elles existent
+        $fDataWithProofs = $f;
         if (!empty($preuvesByFiche[$fid])) {
-            $sem = $f['semestre'] ?? 'S1';
-            if (!isset($fichesAvecPreuves[$sem])) $fichesAvecPreuves[$sem] = [];
-            $fichesAvecPreuves[$sem][] = array_merge($f, [
-                'preuves' => $preuvesByFiche[$fid]
-            ]);
+            $fDataWithProofs['preuves'] = $preuvesByFiche[$fid];
+        } else {
+            $fDataWithProofs['preuves'] = [];  // Pas de preuves, mais onglet visible
+        }
+        $fichesAvecPreuves[$sem][] = $fDataWithProofs;
+    }
+}
+
+// Vue active : 'fiche' (défaut), 'cours', 'suivi_s1', 'suivi_s2', ou 'vacataire'
+$vue = in_array($_GET['vue'] ?? '', ['fiche','cours','suivi_s1','suivi_s2','vacataire']) ? $_GET['vue'] : 'fiche';
+
+// ── Récupérer les dossiers VACATAIRE ────────────────────────
+$dossiersVacataire = [];
+$pdo = Database::getInstance();
+$vacatRepo = new VacataireDossierRepository($pdo);
+
+// DEI : voir TOUS les dossiers en attente
+// Enseignant : voir ses propres dossiers
+if (Auth::isDei()) {
+    $dossiersVacataire = $vacatRepo->getDossiersPendingDEI();
+} else {
+    $dossiersVacataire = $vacatRepo->getDossiersByEnseignant((int)$enseignant['id']);
+}
+
+// ── Générer les demandes de vacation pour TOUTES les fiches VACATAIRE ──
+$demandesVacation = [];
+$generateur = new DemandeVacationGenerator();
+foreach ($fiches as $fiche) {
+    if (($fiche['type_workflow'] ?? '') === 'VACATAIRE') {
+        try {
+            $html = $generateur->genererFicheHTML((int)$fiche['id'], (int)$enseignant['id']);
+            $demandesVacation[(int)$fiche['id']] = $html;
+        } catch (Exception $e) {
+            error_log("⚠️ Erreur génération demande vacation fiche {$fiche['id']} : " . $e->getMessage());
+            $demandesVacation[(int)$fiche['id']] = '<p style="color:red;">Erreur génération demande</p>';
         }
     }
 }
 
-// Vue active : 'fiche' (défaut) ou 'cours'
-$vue = in_array($_GET['vue'] ?? '', ['fiche','cours','suivi_s1','suivi_s2']) ? $_GET['vue'] : 'fiche';
-
 $bodyContent = renderTemplate('dashboard', [
-    'enseignant'       => $enseignant,
-    'fiches'           => $fiches,
-    'stats'            => $stats,
-    'accessLink'       => $accessLink,
-    'csrfToken'        => $csrfToken,
-    'preuvesCounts'     => $preuvesCounts,
-    'preuvesByFiche'    => $preuvesByFiche,
-    'fichesAvecPreuves' => $fichesAvecPreuves,
-    'historiqueGlobal'  => $historiqueGlobal,
-    'annee'            => $annee,
-    'vue'              => $vue,
-    'rawToken'         => $rawToken,
+    'enseignant'         => $enseignant,
+    'fiches'             => $fiches,
+    'stats'              => $stats,
+    'accessLink'         => $accessLink,
+    'csrfToken'          => $csrfToken,
+    'preuvesCounts'      => $preuvesCounts,
+    'preuvesByFiche'     => $preuvesByFiche,
+    'fichesAvecPreuves'  => $fichesAvecPreuves,
+    'historiqueGlobal'   => $historiqueGlobal,
+    'annee'              => $annee,
+    'vue'                => $vue,
+    'rawToken'           => $rawToken,
+    'dossiersVacataire'  => $dossiersVacataire,
+    'demandesVacation'   => $demandesVacation,
 ]);
 echo renderLayout('Mon tableau de bord', $bodyContent, $csrfToken);
+
+// ── Fonction de détachement des fiches par établissement ──────
+function detacherFichesParlEtablissement(array $fiches): array
+{
+    /**
+     * LOGIQUE : Si une fiche a des cours de différents établissements bénéficiaires,
+     * créer une "fiche logique" par établissement pour l'affichage au tableau de bord.
+     * 
+     * Exemple :
+     *   Fiche ID 5 : CM FSTB (Informatique) + TD CUP (Chimie)
+     *   Après détachement : 
+     *     - Fiche 5a (virtuelle) : CM FSTB (etab_id=2)
+     *     - Fiche 5b (virtuelle) : TD CUP (etab_id=3)
+     *
+     * Les fiches virtuelles gardent l'ID original mais sont groupées par établissement.
+     * Cela permet à l'enseignant de voir ses fiches organisées par lieu de dispensation.
+     */
+    if (empty($fiches)) return [];
+    
+    $pdo = Database::getInstance();
+    $fichesDetachees = [];
+    
+    foreach ($fiches as $fiche) {
+        $ficheId = (int)$fiche['id'];
+        
+        // Récupérer TOUS les établissements bénéficiaires de cette fiche
+        $stmt = $pdo->prepare(
+            "SELECT DISTINCT etab_beneficiaire_fiche 
+             FROM fiches 
+             WHERE id = ? AND etab_beneficiaire_fiche > 0"
+        );
+        $stmt->execute([$ficheId]);
+        $etablissements = $stmt->fetchAll(\PDO::FETCH_COLUMN);
+        
+        // Si une seule établissement (ou aucun) → afficher normalement
+        if (count($etablissements) <= 1) {
+            $fichesDetachees[] = $fiche;
+            continue;
+        }
+        
+        // Si plusieurs établissements → créer une "fiche virtuelle" par établissement
+        // mais affichée avec l'ID original (la BD reste inchangée)
+        foreach ($etablissements as $etabId) {
+            $ficheVirtuelle = $fiche;
+            $ficheVirtuelle['etab_beneficiaire_fiche'] = (int)$etabId;
+            $ficheVirtuelle['est_detachee'] = true;  // Flag pour le template
+            $ficheVirtuelle['source_fiche_id'] = $ficheId;  // Traçabilité
+            $fichesDetachees[] = $ficheVirtuelle;
+        }
+    }
+    
+    return $fichesDetachees;
+}
 
 // ── Helpers ──────────────────────────────────────────────────
 function renderTemplate(string $name, array $vars = []): string

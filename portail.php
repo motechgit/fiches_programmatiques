@@ -143,10 +143,12 @@ $roleColors = [
 ];
 $rc = $roleColors[$role] ?? ['bg'=>'#f0f0f0','txt'=>'#333'];
 $stats = $repo->getStats();
+$viewOnly = false; // Par défaut, mode édition
 
 // ── Vue enseignant individuel ───────────────────────────────
 if (isset($_GET['ens'])) {
     $ensId = (int)$_GET['ens'];
+    $viewOnly = isset($_GET['view']) && $_GET['view'] === '1'; // Mode visualisation (masquer les boutons d'édition)
     $pdo   = Database::getInstance();
     $stmt  = $pdo->prepare("SELECT * FROM enseignants WHERE id = ? LIMIT 1");
     $stmt->execute([$ensId]);
@@ -179,7 +181,7 @@ if (isset($_GET['ens'])) {
         }
     }
 
-    $annee      = $config['annee_academique'] ?? '2024-2025';
+    $annee      = !empty($fiches) ? ($fiches[0]['annee_academique'] ?? '2024-2025') : ($config['annee_academique'] ?? '2024-2025');
     $stCls      = ['en_attente'=>'badge-or','valide'=>'badge-green','rejete'=>'badge-red'];
     $stIcons    = ['en_attente'=>'⏳','valide'=>'✓','rejete'=>'✕'];
     $stCols     = ['statut_chef','statut_dir_adj','statut_dir','statut_dei','statut_vp_eip'];
@@ -278,16 +280,57 @@ if (isset($_GET['ens'])) {
             <strong><em>BURKINA FASO</em></strong><br>
             <em>La Patrie ou la Mort, nous Vaincrons</em><br>
             <span style="letter-spacing:2px;font-size:7.5pt">·········································</span><br>
-            Année universitaire <strong><?= Security::e($annee) ?></strong>
+            <?php 
+            // ✓ Utiliser l'année de la fiche BD (source de vérité = données saisies)
+            $yearDisplay = !empty($fiches) ? ($fiches[0]['annee_academique'] ?? '2024-2025') : ($annee ?? '2024-2025');
+            ?>
+            Année universitaire <strong><?= Security::e($yearDisplay) ?></strong>
           </td>
         </tr>
       </table>
 
+      <!-- Numéro de fiche et QR code -->
+      <?php
+      if (!empty($fiches)) {
+          $fichePrincipale = $fiches[0];
+          $numeroFiche = $fichePrincipale['numero_fiche'] ?? '';
+          $qrcodeToken = $fichePrincipale['qrcode_token'] ?? '';
+          $qrcodeBase64 = '';
+          
+          // Générer le numéro si absent
+          if (!$numeroFiche) {
+              $anneeNum = explode('-', $yearDisplay ?? '2024-2025')[0];
+              $numeroFiche = 'FP-' . $anneeNum . '-' . str_pad((string)$fichePrincipale['id'], 4, '0', STR_PAD_LEFT);
+          }
+          
+          // Générer le token QR si absent
+          if (!$qrcodeToken) {
+              $qrcodeToken = bin2hex(random_bytes(16));
+          }
+          
+          // Générer un vrai QR code via API gratuite
+          // URL de vérification - adapter le domaine selon l'environnement
+          $verificationUrl = 'http://127.0.0.1/fiches_programmatiques/verifier-fiche.php?token=' . urlencode($qrcodeToken);
+          $qrcodeBase64 = 'https://api.qrserver.com/v1/create-qr-code/?size=60x60&data=' . urlencode($verificationUrl);
+      ?>
+      <table style="width:100%;border:none;border-collapse:collapse;margin-bottom:4px">
+          <tr>
+              <td style="width:70%;vertical-align:top;font-size:9pt;padding:2px">
+                  <strong>Numéro : <?= Security::e($numeroFiche) ?></strong><br>
+                  <span style="font-size:8pt;color:#666">Vérification</span>
+              </td>
+              <td style="width:30%;text-align:right;vertical-align:top;padding:2px">
+                  <img src="<?= $qrcodeBase64 ?>" alt="QR Code" style="width:60px;height:60px;border:1px solid #999">
+              </td>
+          </tr>
+      </table>
+      <?php } ?>
+
       <!-- Titre -->
-      <div style="border:1.5px solid #000;background:#e0e0e0;text-align:center;padding:7px;margin-bottom:3px">
-        <span style="font-size:13pt;font-weight:700">FICHE PROGRAMMATIQUE</span>
+      <div style="border:1.5px solid #000;background:#e0e0e0;text-align:center;padding:4px;margin-bottom:2px">
+        <span style="font-size:11pt;font-weight:700">FICHE PROGRAMMATIQUE</span>
       </div>
-      <div style="text-align:center;font-size:10.5pt;font-weight:700;text-decoration:underline;margin-bottom:8px">
+      <div style="text-align:center;font-size:9pt;font-weight:700;text-decoration:underline;margin-bottom:3px">
         Pour enseignant <?= Security::e($ens['type_enseignant'] ?? 'permanent') ?>
       </div>
 
@@ -306,7 +349,7 @@ if (isset($_GET['ens'])) {
       $ea     = $ens['etab_administratif'] ?? '';
       $eb     = $ens['etab_beneficiaire']  ?? '';
       ?>
-      <div style="font-size:10pt;line-height:1.9;margin-bottom:6px">
+      <div style="font-size:8.5pt;line-height:1.4;margin-bottom:3px">
         <div>
           Nom : <strong><?= Security::e($nom) ?></strong>
           <?php if($prenom): ?>&nbsp;&nbsp; Prénom(s) : <strong><?= Security::e($prenom) ?></strong><?php endif; ?>
@@ -377,7 +420,7 @@ if (isset($_GET['ens'])) {
       $coursEnPerimetre = array_values(array_filter($tousLesCoursPrim, function($f){ return dansPerietre($f); }));
       $ficheEstMixte    = count($tousLesCoursPrim) > count($coursEnPerimetre);
       ?>
-      <?php if ($auMoinsUneValidable && !$ficheEstMixte): ?>
+      <?php if ($auMoinsUneValidable && !$ficheEstMixte && !($viewOnly ?? false)): ?>
       <div class="no-print" style="margin:10px 0 14px;display:flex;gap:10px;align-items:center">
         <form method="POST" action="valider_fiche_global.php" style="display:inline">
           <input type="hidden" name="csrf_token" value="<?= Security::e($csrfToken) ?>">
@@ -474,7 +517,7 @@ if (isset($_GET['ens'])) {
             if (($f['statut_dir_adj'] ?? 'en_attente') === 'en_attente') return ['label'=>'En attente — Dir. adjoint', 'class'=>'badge-or'];
             if (($f['statut_dir']     ?? 'en_attente') === 'en_attente') return ['label'=>'En attente — Directeur',    'class'=>'badge-or'];
             if (($f['statut_dei']     ?? 'en_attente') === 'en_attente') return ['label'=>'En attente — DEI',          'class'=>'badge-or'];
-            if ($wf === 'VACATAIRE') return ['label'=>'En attente — VP EIP', 'class'=>'badge-or'];
+            // NOTE : VP_EIP n'est PAS utilisé pour VACATAIRE
             return ['label'=>'En attente', 'class'=>'badge-or'];
         }
         }
@@ -518,7 +561,7 @@ if (isset($_GET['ens'])) {
                 // Action : bouton Décider uniquement si dans le périmètre
                 $actionHtml = '';
                 $dansPerim  = dansPerietre($f);
-                if ($peutValider && $dansPerim) {
+                if ($peutValider && $dansPerim && !($viewOnly ?? false)) {
                     $actionHtml = '<div style="display:flex;gap:4px;flex-wrap:wrap;">'
                         .'<a href="valider_fiche.php?id='.$fid.'&from_ens='.(int)($f['enseignant_id']??0).'"'
                         .' class="btn btn-xs btn-primary">Décider</a>'
@@ -681,7 +724,14 @@ if (isset($_GET['ens'])) {
             <strong><em>BURKINA FASO</em></strong><br>
             <em>La Patrie ou la Mort, nous Vaincrons</em><br>
             <span style="letter-spacing:2px;font-size:7.5pt">·········································</span><br>
-            Année universitaire <strong><?= Security::e($annee) ?></strong>
+            <?php 
+            // ✓ Utiliser l'année de la fiche BD pour le semestre courant
+            $yearSuivi = '2024-2025';
+            if (!empty($fichesSuiviFiltrees) && !empty($fichesSuiviFiltrees[0])) {
+              $yearSuivi = $fichesSuiviFiltrees[0]['annee_academique'] ?? '2024-2025';
+            }
+            ?>
+            Année universitaire <strong><?= Security::e($yearSuivi) ?></strong>
           </td>
         </tr>
       </table>
@@ -895,20 +945,99 @@ ob_start();
     <a href="admin_utilisateurs.php" class="btn btn-sm" style="background:rgba(255,255,255,.15);color:#fff;border-color:rgba(255,255,255,.4)">Utilisateurs</a>
     <a href="vp_eip_nomination.php" class="btn btn-sm" style="background:rgba(255,255,255,.15);color:#fff;border-color:rgba(255,255,255,.4)">📋 Nominations</a>
     <?php endif; ?>
-    <?php if ($role === 'vp_eip'): ?>
-    <a href="vp_eip_nomination.php" class="btn btn-sm" style="background:rgba(255,179,0,.25);color:#FFB300;border-color:rgba(255,179,0,.5);font-weight:700">📋 Nominations</a>
-    <?php endif; ?>
     <a href="portail.php?logout=1" class="btn btn-sm" style="background:rgba(255,255,255,.15);color:#fff;border-color:rgba(255,255,255,.4)">Déconnexion</a>
   </div>
 </div>
 
-<!-- Stats globales -->
+<!-- Stats globales (masquées pour VP EIP) -->
+<?php if ($role !== 'vp_eip'): ?>
 <div class="stat-grid">
   <div class="stat"><div class="stat-label">Enseignants (périmètre)</div><div class="stat-val"><?= $total ?></div></div>
   <div class="stat"><div class="stat-label">À traiter</div><div class="stat-val" style="color:var(--warn)"><?= (int)($stats['a_traiter']??0) ?></div></div>
   <div class="stat"><div class="stat-label">Validées (mon étape)</div><div class="stat-val" style="color:var(--ujkz-vert)"><?= (int)($stats['validees']??0) ?></div></div>
   <div class="stat"><div class="stat-label">Complètement validées</div><div class="stat-val" style="color:var(--ujkz-vert)"><?= (int)($stats['completement_validees']??0) ?></div></div>
 </div>
+<?php endif; ?>
+
+<!-- ══ SECTION VP EIP : FICHES VACATAIRES VALIDÉES ══ -->
+<?php if ($role === 'vp_eip'): ?>
+<div class="card" style="margin-bottom:1.5rem">
+  <div style="background:#F3E5F5;padding:15px;border-radius:8px 8px 0 0;border-bottom:2px solid #6A1B9A">
+    <h2 style="font-size:16px;font-weight:700;color:#6A1B9A;margin:0">📋 Fiches Programmatiques de Vacataires Validées</h2>
+    <div style="font-size:12px;color:#6A1B9A;margin-top:5px">Consultation et impression uniquement (aucune validation à faire)</div>
+  </div>
+  
+  <?php
+  // Fonction helper pour l'échappement HTML
+  $e = function($v){ return Security::e($v); };
+  
+  // Récupérer les enseignants avec fiches vacataires validées par DEI
+  $pdo = Database::getInstance();
+  $stmtVacataires = $pdo->prepare(
+    "SELECT DISTINCT 
+        e.id, e.nom, e.prenom, e.matricule, e.grade, e.etab_beneficiaire,
+        COUNT(f.id) AS nb_fiches,
+        MAX(f.annee_academique) AS derniere_annee
+     FROM enseignants e
+     JOIN fiches f ON f.enseignant_id = e.id
+     WHERE f.type_workflow = 'VACATAIRE' 
+       AND f.statut_dei = 'valide'
+       AND f.statut = 'validee'
+     GROUP BY e.id
+     ORDER BY e.nom, e.prenom"
+  );
+  $stmtVacataires->execute();
+  $vacataires = $stmtVacataires->fetchAll();
+  
+  if (empty($vacataires)): ?>
+  <div style="padding:30px;text-align:center;color:#999">
+    <div style="font-size:48px;margin-bottom:15px">📭</div>
+    <div style="font-size:14px">Aucune fiche de vacataire validée pour le moment</div>
+  </div>
+  
+  <?php else: ?>
+  <div style="padding:15px">
+    <?php foreach ($vacataires as $vac): 
+      $estabNom = '';
+      if (!empty($vac['etab_beneficiaire'])) {
+        $stEtab = $pdo->prepare("SELECT nom FROM etablissements WHERE id = ? LIMIT 1");
+        $stEtab->execute([$vac['etab_beneficiaire']]);
+        $etab = $stEtab->fetch();
+        $estabNom = $etab['nom'] ?? '';
+      }
+    ?>
+    <div style="border:1px solid #ddd;border-radius:6px;padding:15px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
+      <div style="flex:1">
+        <div style="font-weight:600;font-size:14px;color:#333;margin-bottom:5px">
+          <?= $e(strtoupper($vac['nom'])) ?> <?= $e($vac['prenom']) ?>
+        </div>
+        <div style="font-size:12px;color:#666;margin-bottom:3px">
+          <strong>Grade :</strong> <?= $e($vac['grade'] ?? '—') ?> | 
+          <strong>Matricule :</strong> <?= $e($vac['matricule']) ?>
+        </div>
+        <div style="font-size:12px;color:#666;margin-bottom:3px">
+          <strong>Établissement :</strong> <?= $e($estabNom) ?>
+        </div>
+        <div style="font-size:11px;color:#999">
+          <?= $vac['nb_fiches'] ?> fiche(s) validée(s) — Année : <?= $e($vac['derniere_annee']) ?>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-left:15px">
+        <a href="portail.php?ens=<?= (int)$vac['id'] ?>&view=1" 
+           class="btn btn-sm" style="background:#17a2b8;color:white;padding:6px 12px;text-decoration:none">
+          📋 Voir fiche
+        </a>
+        <a href="dossier_vacataire.php?ens_id=<?= (int)$vac['id'] ?>&annee=<?= urlencode($vac['derniere_annee']) ?>" 
+           class="btn btn-sm" style="background:#6A1B9A;color:white;padding:6px 12px;text-decoration:none">
+          📁 Dossier
+        </a>
+      </div>
+    </div>
+    <?php endforeach; ?>
+  </div>
+  <?php endif; ?>
+</div>
+<?php endif; ?>
 
 <!-- Export Excel (DEI seulement) -->
 <?php if (($authRole ?? '') === 'dei'): ?>
@@ -925,6 +1054,9 @@ ob_start();
   <?php endforeach; ?>
 </div>
 <?php endif; ?>
+
+<!-- Filtres et Liste enseignants (masqués pour VP EIP) -->
+<?php if ($role !== 'vp_eip'): ?>
 
 <!-- Filtres -->
 <div class="card" style="padding:1rem 1.5rem;margin-bottom:1rem">
@@ -1067,7 +1199,7 @@ ob_start();
       function statutEtapeLabel(array $f): array {
           if (($f['statut'] ?? '') === 'rejetee') {
               if (($f['statut_dei']     ?? '') === 'rejete') return ['label'=>'Rejetée — DEI',         'class'=>'badge-red'];
-              if (($f['statut_vp_eip']  ?? '') === 'rejete') return ['label'=>'Rejetée — VP EIP',       'class'=>'badge-red'];
+              // NOTE : VP_EIP n'est PAS utilisé pour VACATAIRE
               if (($f['statut_dir']     ?? '') === 'rejete') return ['label'=>'Rejetée — Directeur',    'class'=>'badge-red'];
               if (($f['statut_dir_adj'] ?? '') === 'rejete') return ['label'=>'Rejetée — Dir. adjoint', 'class'=>'badge-red'];
               if (($f['statut_chef']    ?? '') === 'rejete') return ['label'=>'Rejetée — Chef dép.',    'class'=>'badge-red'];
@@ -1091,26 +1223,28 @@ ob_start();
       <div class="btn-group">
         <a href="portail.php?ens=<?= (int)$ens['id'] ?>"
            class="btn btn-sm btn-primary">Voir fiche</a>
-        <?php if (($ens['type_enseignant']??'') === 'vacataire'
-               && in_array($role, ['dei','vp_eip'], true)):
-          // Vérifier si nomination validée
+        <?php if (($ens['type_enseignant']??'') === 'vacataire'): ?>
+        <a href="dossier_vacataire.php?ens_id=<?= (int)$ens['id'] ?>&annee=<?= urlencode($ens['annee_academique'] ?? $config['annee_academique']) ?>"
+           class="btn btn-sm btn-gold" title="Dossier complet (fiche + documents + nomination)">
+          📁 Dossier
+        </a>
+        <?php if (in_array($role, ['dei','vp_eip'], true)): ?>
+          <?php
+          // Vérifier si nomination validée (seulement pour DEI et VP EIP)
           $_pdoN = Database::getInstance();
           $stNomCheck = $_pdoN->prepare(
               "SELECT id FROM nominations WHERE enseignant_id=? AND annee_academique=? AND statut='valide' LIMIT 1"
           );
-          $stNomCheck->execute([(int)$ens['id'], $config['annee_academique']]);
+          $stNomCheck->execute([(int)$ens['id'], $ens['annee_academique'] ?? $config['annee_academique']]);
           $hasNomination = (bool)$stNomCheck->fetch();
-        ?>
-        <a href="dossier_vacataire.php?ens_id=<?= (int)$ens['id'] ?>&annee=<?= urlencode($config['annee_academique']) ?>"
-           class="btn btn-sm btn-gold" title="Dossier complet (fiche + documents + nomination)">
-          📁 Dossier
-        </a>
-        <?php if ($hasNomination): ?>
-        <a href="generer_nomination.php?ens_id=<?= (int)$ens['id'] ?>&annee=<?= urlencode($config['annee_academique']) ?>"
-           target="_blank" class="btn btn-sm" style="background:#FFB300;color:#000;font-weight:600"
-           title="Acte de nomination">
-          📄 Acte
-        </a>
+          if ($hasNomination):
+          ?>
+          <a href="generer_nomination.php?ens_id=<?= (int)$ens['id'] ?>&annee=<?= urlencode($ens['annee_academique'] ?? $config['annee_academique']) ?>"
+             target="_blank" class="btn btn-sm" style="background:#FFB300;color:#000;font-weight:600"
+             title="Acte de nomination">
+            📄 Acte
+          </a>
+          <?php endif; ?>
         <?php endif; ?>
         <?php endif; ?>
       </div>
@@ -1121,6 +1255,8 @@ ob_start();
 </table>
 <?php endif; ?>
 </div>
+
+<?php endif; // Fermeture du bloc if ($role !== 'vp_eip') ?>
 
 <?php
 $bodyContent = ob_get_clean();

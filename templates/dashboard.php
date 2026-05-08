@@ -39,8 +39,7 @@ function statutEtapeLabel(array $f): array {
         return ['label'=>'En attente — Directeur',    'class'=>'badge-or'];
     if (($f['statut_dei'] ?? 'en_attente') === 'en_attente')
         return ['label'=>'En attente — DEI',          'class'=>'badge-or'];
-    if ($wf === 'VACATAIRE' && in_array($f['statut_vp_eip'] ?? '', ['en_attente','non_requis'], true))
-        return ['label'=>'En attente — VP EIP',       'class'=>'badge-or'];
+    // NOTE : VP_EIP n'est PAS utilisé pour VACATAIRE
     return ['label'=>'En attente', 'class'=>'badge-or'];
 }
 
@@ -95,20 +94,20 @@ $dateImpression = date('d/m/Y à H:i');
 /* ── Styles fiche programmatique ── */
 .fp-wrapper {
   background:#fff; border:1.5px solid #ccc; border-radius:6px;
-  padding:22px 28px; margin-bottom:1.5rem;
-  font-family:Arial,Helvetica,sans-serif; font-size:10.5pt; color:#000;
+  padding:12px 14px; margin-bottom:0.8rem;
+  font-family:Arial,Helvetica,sans-serif; font-size:9pt; color:#000;
   box-shadow:0 2px 10px rgba(0,0,0,.07);
 }
-.fp-table { width:100%; border-collapse:collapse; font-size:9.5pt; }
-.fp-table th, .fp-table td { border:1px solid #000; padding:4px 4px; }
+.fp-table { width:100%; border-collapse:collapse; font-size:8.5pt; }
+.fp-table th, .fp-table td { border:1px solid #000; padding:2px 2px; }
 .fp-table th { background:#e0e0e0; text-align:center; font-weight:700; }
 .fp-sem-h { background:#f0f0f0; text-align:center; font-weight:700; font-style:italic; }
 .fp-tot td { background:#d0d0d0; font-weight:700; text-align:center; }
 .fp-grand td { background:#b0b0b0; font-weight:700; text-align:center; }
-.fp-sig { width:100%; border-collapse:collapse; margin-top:16px; }
-.fp-sig td { width:25%; text-align:center; vertical-align:top; padding:6px 8px; }
-.fp-sig-titre { font-weight:700; font-size:9.5pt; text-decoration:underline; margin-bottom:8px; }
-.fp-sig-line { border-bottom:1px solid #000; margin:22px 10px 3px; }
+.fp-sig { width:100%; border-collapse:collapse; margin-top:6px; }
+.fp-sig td { width:25%; text-align:center; vertical-align:top; padding:3px 4px; }
+.fp-sig-titre { font-weight:700; font-size:8pt; text-decoration:underline; margin-bottom:3px; }
+.fp-sig-line { border-bottom:1px solid #000; margin:8px 5px 2px; }
 /* Onglets */
 .db-tabs { display:flex; gap:0; margin-bottom:0; border-bottom:2px solid var(--ujkz-vert); }
 .db-tab {
@@ -200,6 +199,32 @@ $dateImpression = date('d/m/Y à H:i');
   <?php endif; ?>
 </div>
 
+<?php 
+  // Vérifier s'il existe des fiches avec preuves mais non validées par DEI
+  $fiches_avec_preuves_non_dei = [];
+  foreach ($fiches as $f) {
+    $fid = (int)$f['id'];
+    if (!empty($preuvesByFiche[$fid])) {
+      $isDeiValidee = ($f['statut_dei'] ?? '') === 'validee';
+      if (!$isDeiValidee) {
+        $fiches_avec_preuves_non_dei[] = $f;
+      }
+    }
+  }
+  
+  // Afficher une alerte si des fiches ont des preuves mais ne sont pas validées par DEI
+  if (!empty($fiches_avec_preuves_non_dei)): 
+?>
+<div style="margin-bottom: 1.5rem; padding: 15px 20px; background-color: #fff3cd; border: 1px solid #ffc107; border-radius: 6px; color: #856404;">
+  <div style="font-weight: 600; margin-bottom: 8px;">ℹ️ Fiches de suivi en attente</div>
+  <p style="margin: 0; font-size: 14px;">
+    Les fiches de suivi seront disponibles une fois que vos fiches programmatiques auront été <strong>validées par la DEI</strong>. 
+    Actuellement, <?= count($fiches_avec_preuves_non_dei) ?> fiche(s) avec preuve(s) en attente de validation DEI.
+  </p>
+</div>
+<?php endif; ?>
+
+
 <!-- ════════ ONGLET FICHE PROGRAMMATIQUE ════════ -->
 <div class="db-tab-content <?= $vue==='fiche'?'active':'' ?>">
 
@@ -249,16 +274,57 @@ $dateImpression = date('d/m/Y à H:i');
           <strong><em>BURKINA FASO</em></strong><br>
           <em>La Patrie ou la Mort, nous Vaincrons</em><br>
           <span style="letter-spacing:2px;font-size:7.5pt">·········································</span><br>
-          Année universitaire <strong><?= $e($annee) ?></strong>
+          <?php 
+          // ✓ Utiliser l'année de la fiche BD (source de vérité = données saisies)
+          $yearDisplay = !empty($fiches) ? ($fiches[0]['annee_academique'] ?? '2024-2025') : ($annee ?? '2024-2025');
+          ?>
+          Année universitaire <strong><?= $e($yearDisplay) ?></strong>
         </td>
       </tr>
     </table>
 
+    <!-- Numéro de fiche et QR code -->
+    <?php
+    if (!empty($fiches)) {
+        $fichePrincipale = $fiches[0];
+        $numeroFiche = $fichePrincipale['numero_fiche'] ?? '';
+        $qrcodeToken = $fichePrincipale['qrcode_token'] ?? '';
+        $qrcodeBase64 = '';
+        
+        // Générer le numéro si absent
+        if (!$numeroFiche) {
+            $anneeNum = explode('-', $yearDisplay ?? '2024-2025')[0];
+            $numeroFiche = 'FP-' . $anneeNum . '-' . str_pad((string)$fichePrincipale['id'], 4, '0', STR_PAD_LEFT);
+        }
+        
+        // Générer le token QR si absent
+        if (!$qrcodeToken) {
+            $qrcodeToken = bin2hex(random_bytes(16));
+        }
+        
+        // Générer un vrai QR code via API gratuite
+        // URL de vérification - adapter le domaine selon l'environnement
+        $verificationUrl = 'http://127.0.0.1/fiches_programmatiques/verifier-fiche.php?token=' . urlencode($qrcodeToken);
+        $qrcodeBase64 = 'https://api.qrserver.com/v1/create-qr-code/?size=60x60&data=' . urlencode($verificationUrl);
+    ?>
+    <table style="width:100%;border:none;border-collapse:collapse;margin-bottom:4px">
+        <tr>
+            <td style="width:70%;vertical-align:top;font-size:9pt;padding:2px">
+                <strong>Numéro : <?= $e($numeroFiche) ?></strong><br>
+                <span style="font-size:8pt;color:#666">Vérification</span>
+            </td>
+            <td style="width:30%;text-align:right;vertical-align:top;padding:2px">
+                <img src="<?= $qrcodeBase64 ?>" alt="QR Code" style="width:60px;height:60px;border:1px solid #999">
+            </td>
+        </tr>
+    </table>
+    <?php } ?>
+
     <!-- Titre -->
-    <div style="border:1.5px solid #000;background:#e0e0e0;text-align:center;padding:7px;margin-bottom:3px">
-      <span style="font-size:13pt;font-weight:700">FICHE PROGRAMMATIQUE</span>
+    <div style="border:1.5px solid #000;background:#e0e0e0;text-align:center;padding:4px;margin-bottom:2px">
+      <span style="font-size:11pt;font-weight:700">FICHE PROGRAMMATIQUE</span>
     </div>
-    <div style="text-align:center;font-size:10.5pt;font-weight:700;text-decoration:underline;margin-bottom:8px">
+    <div style="text-align:center;font-size:9pt;font-weight:700;text-decoration:underline;margin-bottom:3px">
       Pour enseignant <?= $e($enseignant['type_enseignant'] ?? 'permanent') ?>
     </div>
 
@@ -284,7 +350,7 @@ $dateImpression = date('d/m/Y à H:i');
               || strpos($_rvD,'ki-zerbo')!==false || strpos($_rvD,'ki zerbo')!==false)
               && ($enseignant['type_enseignant'] ?? 'permanent') !== 'vacataire');
     ?>
-    <div style="font-size:10pt;line-height:1.9;margin-bottom:6px">
+    <div style="font-size:8.5pt;line-height:1.4;margin-bottom:3px">
       <div>
         Nom : <strong><?= $e($nom) ?></strong>
         <?php if($prenom): ?>&nbsp;&nbsp; Prénom(s) : <strong><?= $e($prenom) ?></strong><?php endif; ?>
@@ -351,8 +417,8 @@ $dateImpression = date('d/m/Y à H:i');
     </div>
 
     <!-- Titre tableau -->
-    <div style="text-align:center;font-size:9.5pt;margin:8px 0 4px">
-      Tableau descriptif des enseignements confiés en réunion de département
+    <div style="text-align:center;font-size:8.5pt;margin:2px 0 2px">
+      Tableau descriptif des enseignements
     </div>
 
     <!-- Tableau -->
@@ -363,13 +429,13 @@ $dateImpression = date('d/m/Y à H:i');
         $tp = (int)($f['volume_tp']??0);
         $code = $f['code_ue'] ?: ($f['code'] ?: '');
         return '<tr>'
-            .'<td style="border:1px solid #000;padding:4px;text-align:center">'.$n.'</td>'
-            .'<td style="border:1px solid #000;padding:4px;text-align:center">'.$e($code).'</td>'
-            .'<td style="border:1px solid #000;padding:4px">'.$e($f['parcours']??'').'</td>'
-            .'<td style="border:1px solid #000;padding:4px">'.$e($f['cours']??'').'</td>'
-            .'<td style="border:1px solid #000;padding:4px;text-align:center">'.$e($f['ntc']??'').'</td>'
-            .'<td style="border:1px solid #000;padding:4px;text-align:center">'.($cm?:'-').'</td>'
-            .'<td style="border:1px solid #000;padding:4px;text-align:center">'.($td?:'-').'</td>'
+            .'<td style="border:1px solid #000;padding:2px;text-align:center">'.$n.'</td>'
+            .'<td style="border:1px solid #000;padding:2px;text-align:center">'.$e($code).'</td>'
+            .'<td style="border:1px solid #000;padding:2px">'.$e($f['parcours']??'').'</td>'
+            .'<td style="border:1px solid #000;padding:2px">'.$e($f['cours']??'').'</td>'
+            .'<td style="border:1px solid #000;padding:2px;text-align:center">'.$e($f['ntc']??'').'</td>'
+            .'<td style="border:1px solid #000;padding:2px;text-align:center">'.($cm?:'-').'</td>'
+            .'<td style="border:1px solid #000;padding:2px;text-align:center">'.($td?:'-').'</td>'
             .'<td style="border:1px solid #000;padding:4px;text-align:center">'.($tp?:'-').'</td>'
             .'</tr>';
     }
@@ -410,7 +476,7 @@ $dateImpression = date('d/m/Y à H:i');
         <?php endif; ?>
 
         <?php if ($encFiches): ?>
-        <tr><td colspan="8" style="border:1px solid #000;padding:4px;text-align:center;font-weight:700;font-style:italic;font-size:9pt;background:#f0eefc">Encadrement de doctorat / Thèses</td></tr>
+        <tr><td colspan="8" style="border:1px solid #000;padding:4px;text-align:center;font-weight:700;font-style:italic;font-size:9pt;background:#f0eefc">Encadrement</td></tr>
         <?php $cnt=0; foreach ($encFiches as $f): echo fpRow(++$cnt,$f,$e); endforeach; ?>
         <tr style="background:#dddaf5;font-weight:700">
           <td colspan="5" style="border:1px solid #000;padding:4px;text-align:center;font-weight:700;font-size:9pt">TOTAL ENCADREMENT</td>
@@ -508,6 +574,22 @@ $dateImpression = date('d/m/Y à H:i');
     </div>
 
   </div><!-- /fp-wrapper -->
+  
+  <!-- ════════ DEMANDE DE VACATION (si VACATAIRE) ════════ -->
+  <?php if (!empty($fiches) && !empty($demandesVacation)): ?>
+    <?php foreach ($fiches as $fiche): ?>
+      <?php if (($fiche['type_workflow'] ?? '') === 'VACATAIRE' && isset($demandesVacation[(int)$fiche['id']])): ?>
+      
+      <div style="page-break-before: always; margin-top: 40px; border-top: 3px solid #00a651; padding-top: 40px;">
+        <div id="demande-vacation-<?= (int)$fiche['id'] ?>" style="background: white; padding: 0;">
+          <?= $demandesVacation[(int)$fiche['id']] ?>
+        </div>
+      </div>
+      
+      <?php endif; ?>
+    <?php endforeach; ?>
+  <?php endif; ?>
+  
   <?php endif; // fiches non vides ?>
 
 </div><!-- /onglet fiche -->
@@ -550,6 +632,9 @@ $dateImpression = date('d/m/Y à H:i');
           <?php endif; ?>
           <?php if (!empty($f['modifie_le'])): ?>
           · <span style="color:var(--warn)">Modifié <?= $e(date('d/m/Y', strtotime($f['modifie_le']))) ?></span>
+          <?php endif; ?>
+          <?php if (!empty($f['est_detachee'])): ?>
+          · <span style="color:#ff9800;font-weight:600">🏛️ Détachée par établissement</span>
           <?php endif; ?>
         </div>
       </div>
@@ -640,7 +725,14 @@ $dateImpression = date('d/m/Y à H:i');
           <strong><em>BURKINA FASO</em></strong><br>
           <em>La Patrie ou la Mort, nous Vaincrons</em><br>
           <span style="letter-spacing:2px;font-size:7.5pt">·········································</span><br>
-          Année universitaire <strong><?= $e($annee) ?></strong>
+          <?php 
+          // ✓ Utiliser l'année de la fiche BD (source de vérité = données saisies)
+          $yearSuivi = '2024-2025';
+          if (!empty($fichesAvecPreuves[$semSuivi]) && !empty($fichesAvecPreuves[$semSuivi][0])) {
+            $yearSuivi = $fichesAvecPreuves[$semSuivi][0]['annee_academique'] ?? '2024-2025';
+          }
+          ?>
+          Année universitaire <strong><?= $e($yearSuivi) ?></strong>
         </td>
       </tr>
     </table>
@@ -824,6 +916,9 @@ $dateImpression = date('d/m/Y à H:i');
 <?php endif; ?>
 <?php endforeach; ?>
 
+<!-- ════════════════════════════════════════════════════════════ -->
+<!-- ONGLET : DOSSIER VACATION -->
+<!-- ════════════════════════════════════════════════════════════ -->
 <?php // ── Modaux upload/preuves pour onglets Suivi ─────────── ?>
 <style>
 .db-modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);

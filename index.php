@@ -83,6 +83,8 @@ if ($tokenParam && preg_match('/^[a-f0-9]{64}$/', $tokenParam)) {
             'etab_administratif' => $enseignant['etab_administratif'] ?? '',
             'etab_beneficiaire'  => $enseignant['etab_beneficiaire']  ?? '',
             'mois_execution'     => $enseignant['mois_execution']     ?? '',
+            'telephone'          => $enseignant['telephone']          ?? '',
+            'specialite'         => $enseignant['specialite']         ?? '',
             'fichier_diplome'    => $enseignant['fichier_diplome']    ?? '',
             'fichier_nomination' => $enseignant['fichier_nomination'] ?? '',
         ]);
@@ -185,6 +187,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $etab_rattachement  = Security::sanitizeText($_POST['etab_rattachement']  ?? '', 150);
         $etab_administratif = Security::sanitizeText($_POST['etab_administratif'] ?? '', 200);
         $etab_beneficiaire  = Security::sanitizeText($_POST['etab_beneficiaire']  ?? '', 150);
+        $telephone          = Security::sanitizeText($_POST['telephone']          ?? '', 20);
+        $specialite         = Security::sanitizeText($_POST['specialite']         ?? '', 255);
 
         // ── Traiter les uploads AVANT la validation (step1) ──────
         $uploadDir = __DIR__ . '/uploads/';
@@ -408,6 +412,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $prenom             = Security::sanitizeText($old['prenom']             ?? '', 100);
         $diplome            = Security::sanitizeText($old['diplome']            ?? '', 150);
         $mois_execution     = Security::sanitizeText($old['mois_execution']     ?? '', 100);
+        $telephone          = Security::sanitizeText($old['telephone']          ?? '', 20);
+        $specialite         = Security::sanitizeText($old['specialite']         ?? '', 255);
+        // ✓ Récupérer annee_academique saisie par l'enseignant (source de vérité = formulaire)
+        $annee_academique   = Security::sanitizeText($old['annee_academique']   ?? $config['annee_academique'], 20);
         // Récupérer les lignes transmises en hidden (avec _fiche_id pour update sans doublon)
         $lignes = [];
         if (!empty($_POST['l_cours']) && is_array($_POST['l_cours'])) {
@@ -419,7 +427,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $encTmpS = !empty($_POST['l_enc'][$i]) || $semTmpS === 'ENC';
                 $lignes[] = [
                     'cours'                   => $cv,
-                    'code'                    => Security::sanitizeText($_POST['l_code'][$i]      ?? '', 20),
+                    'code'                    => strtoupper(Security::sanitizeText($_POST['l_code'][$i] ?? '', 20)),
                     'parcours'                => Security::sanitizeText($_POST['l_parcours'][$i]  ?? '', 100),
                     'ntc'                     => Security::sanitizeText($_POST['l_ntc'][$i]       ?? '', 10),
                     'niveau'                  => Security::sanitizeText($_POST['l_niveau'][$i]    ?? ($config['niveaux'][0] ?? ''), 50),
@@ -474,7 +482,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             compact('type_enseignant','grade','date_nomination','volume_statutaire',
                     'abattement','motif_abattement','volume_apres_abatt',
                     'etab_rattachement','etab_administratif','etab_beneficiaire',
-                    'prenom','diplome','mois_execution',
+                    'prenom','diplome','mois_execution','telephone','specialite',
                     'fichier_diplome','fichier_nomination')
         );
 
@@ -490,61 +498,141 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $accessLink = App::url('dashboard.php?token=' . urlencode($token));
 
         if ($modeEdit && !empty($lignes)) {
-            // ── Mode modification : upsert par _fiche_id ──────────────────
-            // 1. Collecter les _fiche_id conservés dans le formulaire soumis
-            $ficheIdsGardes = [];
-            foreach ($lignes as $ligne) {
-                $fid = (int)($ligne['_fiche_id'] ?? 0);
-                if ($fid > 0) $ficheIdsGardes[] = $fid;
-            }
+            // ── Mode modification : créer/update fiches PAR ÉTABLISSEMENT ─────
+            
+            if ($typeWorkflow === 'IESR_UJKZ') {
+                // IESR_UJKZ : 1 fiche = 1 ligne (comportement actuel)
+                // 1. Collecter les _fiche_id conservés dans le formulaire soumis
+                $ficheIdsGardes = [];
+                foreach ($lignes as $ligne) {
+                    $fid = (int)($ligne['_fiche_id'] ?? 0);
+                    if ($fid > 0) $ficheIdsGardes[] = $fid;
+                }
 
-            // 2. Supprimer les fiches orphelines (lignes supprimées par l'enseignant)
-            $pdo2 = Database::getInstance();
-            if (!empty($ficheIdsGardes)) {
-                $placeholders = implode(',', array_fill(0, count($ficheIdsGardes), '?'));
-                $stmtDel = $pdo2->prepare(
-                    "DELETE FROM fiches WHERE enseignant_id = ? AND id NOT IN ($placeholders)"
-                );
-                $stmtDel->execute(array_merge([$enseignantId], $ficheIdsGardes));
-            } else {
-                // Aucune ligne existante conservée : supprimer toutes les anciennes
-                $pdo2->prepare("DELETE FROM fiches WHERE enseignant_id = ?")
-                     ->execute([$enseignantId]);
-            }
-
-            // 3. Update ou create chaque ligne restante
-            $dernierId = 0;
-            foreach ($lignes as $ligne) {
-                $isEnc = !empty($ligne['is_encadrement']) || ($ligne['semestre'] ?? '') === 'ENC';
-                // Encadrement uniquement autorisé pour IESR_UJKZ
-                if ($isEnc && $typeWorkflow !== 'IESR_UJKZ') { continue; }
-                $ficheData = [
-                    'cours'            => $ligne['cours'],
-                    'code'             => $ligne['code']      ?? '',
-                    'code_ue'          => $ligne['code']      ?? '',
-                    'parcours'         => $ligne['parcours']  ?? '',
-                    'ntc'              => $ligne['ntc']        ?? '',
-                    'niveau'           => $ligne['niveau']    ?? ($config['niveaux'][0] ?? ''),
-                    'semestre'         => $isEnc ? 'ENC' : ($ligne['semestre'] ?? 'S1'),
-                    'volume_cm'        => $ligne['volume_cm'] ?? 0,
-                    'volume_td'        => $ligne['volume_td'] ?? 0,
-                    'volume_tp'        => $ligne['volume_tp'] ?? 0,
-                    'is_encadrement'          => $isEnc ? 1 : 0,
-                    'etab_beneficiaire_fiche'  => $isEnc ? 0 : (int)($ligne['etab_beneficiaire_fiche'] ?? 0),
-                    'dept_beneficiaire_fiche'  => $isEnc ? 0 : (int)($ligne['dept_beneficiaire_fiche'] ?? 0),
-                    'objectifs'               => '',
-                    'evaluation'              => $config['evaluations'][1] ?? 'Contrôle continu + examen final',
-                    'annee_academique'        => $config['annee_academique'],
-                    'type_workflow'           => $typeWorkflow,
-                ];
-                $existingId = (int)($ligne['_fiche_id'] ?? 0);
-                if ($existingId > 0) {
-                    $repo->updateFiche($existingId, $enseignantId, $ficheData);
-                    $dernierId = $existingId;
+                // 2. Supprimer les fiches orphelines (lignes supprimées par l'enseignant)
+                $pdo2 = Database::getInstance();
+                if (!empty($ficheIdsGardes)) {
+                    $placeholders = implode(',', array_fill(0, count($ficheIdsGardes), '?'));
+                    $stmtDel = $pdo2->prepare(
+                        "DELETE FROM fiches WHERE enseignant_id = ? AND id NOT IN ($placeholders)"
+                    );
+                    $stmtDel->execute(array_merge([$enseignantId], $ficheIdsGardes));
                 } else {
+                    // Aucune ligne existante conservée : supprimer toutes les anciennes
+                    $pdo2->prepare("DELETE FROM fiches WHERE enseignant_id = ?")
+                         ->execute([$enseignantId]);
+                }
+
+                // 3. Update ou create chaque ligne restante
+                $dernierId = 0;
+                foreach ($lignes as $ligne) {
+                    $isEnc = !empty($ligne['is_encadrement']) || ($ligne['semestre'] ?? '') === 'ENC';
+                    // Encadrement uniquement autorisé pour IESR_UJKZ
+                    if ($isEnc && $typeWorkflow !== 'IESR_UJKZ') { continue; }
+                    $ficheData = [
+                        'cours'            => $ligne['cours'],
+                        'code'             => $ligne['code']      ?? '',
+                        'code_ue'          => $ligne['code']      ?? '',
+                        'parcours'         => $ligne['parcours']  ?? '',
+                        'ntc'              => $ligne['ntc']        ?? '',
+                        'niveau'           => $ligne['niveau']    ?? ($config['niveaux'][0] ?? ''),
+                        'semestre'         => $isEnc ? 'ENC' : ($ligne['semestre'] ?? 'S1'),
+                        'volume_cm'        => $ligne['volume_cm'] ?? 0,
+                        'volume_td'        => $ligne['volume_td'] ?? 0,
+                        'volume_tp'        => $ligne['volume_tp'] ?? 0,
+                        'is_encadrement'          => $isEnc ? 1 : 0,
+                        'etab_beneficiaire_fiche'  => $isEnc ? 0 : (int)($ligne['etab_beneficiaire_fiche'] ?? 0),
+                        'dept_beneficiaire_fiche'  => $isEnc ? 0 : (int)($ligne['dept_beneficiaire_fiche'] ?? 0),
+                        'objectifs'               => '',
+                        'evaluation'              => $config['evaluations'][1] ?? 'Contrôle continu + examen final',
+                        'annee_academique'        => $annee_academique,
+                        'type_workflow'           => $typeWorkflow,
+                    ];
+                    $existingId = (int)($ligne['_fiche_id'] ?? 0);
+                    if ($existingId > 0) {
+                        $repo->updateFiche($existingId, $enseignantId, $ficheData);
+                        $dernierId = $existingId;
+                    } else {
+                        $dernierId = $repo->createFiche($enseignantId, $ficheData);
+                    }
+                }
+            } else {
+                // IESR_NON_UJKZ + VACATAIRE : créer/update 1 fiche par établissement
+                // Supprimer toutes les anciennes fiches
+                $pdo2 = Database::getInstance();
+                $pdo2->prepare("DELETE FROM fiches WHERE enseignant_id = ?")->execute([$enseignantId]);
+                
+                // Grouper les lignes par établissement
+                $lignesParEtab = [];
+                foreach ($lignes as $ligne) {
+                    $etabId = (int)($ligne['etab_beneficiaire_fiche'] ?? 0);
+                    $deptId = (int)($ligne['dept_beneficiaire_fiche'] ?? 0);
+                    if ($etabId <= 0) continue;  // Ignorer les lignes sans établissement
+                    
+                    $key = "$etabId:$deptId";
+                    if (!isset($lignesParEtab[$key])) {
+                        $lignesParEtab[$key] = [
+                            'etab_id'  => $etabId,
+                            'dept_id'  => $deptId,
+                            'lignes'   => []
+                        ];
+                    }
+                    $lignesParEtab[$key]['lignes'][] = $ligne;
+                }
+                
+                // Créer 1 fiche par groupe (établissement + département)
+                $dernierId = 0;
+                foreach ($lignesParEtab as $groupKey => $group) {
+                    $lignesGroup = $group['lignes'];
+                    $etabId = $group['etab_id'];
+                    $deptId = $group['dept_id'];
+                    
+                    // Agréger les volumes
+                    $volumeCM = 0;
+                    $volumeTD = 0;
+                    $volumeTP = 0;
+                    $coursNoms = [];
+                    
+                    foreach ($lignesGroup as $ligne) {
+                        $volumeCM += (int)($ligne['volume_cm'] ?? 0);
+                        $volumeTD += (int)($ligne['volume_td'] ?? 0);
+                        $volumeTP += (int)($ligne['volume_tp'] ?? 0);
+                        $coursNoms[] = $ligne['cours'] ?? '';
+                    }
+                    
+                    // Titre de la fiche
+                    $titre = implode(' + ', array_unique($coursNoms));
+                    if (strlen($titre) > 200) {
+                        $titre = implode(', ', array_unique($coursNoms));
+                    }
+                    if (strlen($titre) > 200) {
+                        $titre = count(array_unique($coursNoms)) . ' cours';
+                    }
+                    
+                    $ficheData = [
+                        'cours'            => $titre,
+                        'code'             => $lignesGroup[0]['code'] ?? '',
+                        'code_ue'          => $lignesGroup[0]['code'] ?? '',
+                        'parcours'         => $lignesGroup[0]['parcours'] ?? '',
+                        'ntc'              => $lignesGroup[0]['ntc'] ?? '',
+                        'niveau'           => $lignesGroup[0]['niveau'] ?? ($config['niveaux'][0] ?? ''),
+                        'semestre'         => 'S1',
+                        'volume_cm'        => $volumeCM,
+                        'volume_td'        => $volumeTD,
+                        'volume_tp'        => $volumeTP,
+                        'is_encadrement'   => 0,
+                        'etab_beneficiaire_fiche' => $etabId,
+                        'dept_beneficiaire_fiche' => $deptId,
+                        'objectifs'        => '',
+                        'evaluation'       => $config['evaluations'][1] ?? 'Contrôle continu + examen final',
+                        'annee_academique' => $annee_academique,
+                        'type_workflow'    => $typeWorkflow,
+                    ];
+                    
                     $dernierId = $repo->createFiche($enseignantId, $ficheData);
                 }
             }
+            
             $security->audit('fiche_modified', strtoupper(trim($matricule)),
                 count($lignes).' cours mis à jour');
             unset($_SESSION['csrf_token']);
@@ -558,38 +646,118 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'config'     => $config,
             ]);
 
+        } else if ($modeEdit && empty($lignes)) {
+            // Pas de lignes validées
+            error_log("DEBUG: modeEdit=true mais lignes vides");
         } else {
-            // ── Mode nouvelle fiche : créer N fiches ──────────────────────
-            $dernierId = 0;
-            foreach ($lignes as $ligne) {
-                $isEnc2 = !empty($ligne['is_encadrement']) || ($ligne['semestre'] ?? '') === 'ENC';
-                // Encadrement uniquement autorisé pour IESR_UJKZ
-                if ($isEnc2 && $typeWorkflow !== 'IESR_UJKZ') { continue; }
-                $ficheData = [
-                    'cours'            => $ligne['cours'],
-                    'code'             => $ligne['code']      ?? '',
-                    'code_ue'          => $ligne['code']      ?? '',
-                    'parcours'         => $ligne['parcours']  ?? '',
-                    'ntc'              => $ligne['ntc']        ?? '',
-                    'niveau'           => $ligne['niveau']    ?? ($config['niveaux'][0] ?? ''),
-                    'semestre'         => $isEnc2 ? 'ENC' : ($ligne['semestre'] ?? 'S1'),
-                    'volume_cm'        => $ligne['volume_cm'] ?? 0,
-                    'volume_td'        => $ligne['volume_td'] ?? 0,
-                    'volume_tp'        => $ligne['volume_tp'] ?? 0,
-                    'is_encadrement'   => $isEnc2 ? 1 : 0,
-                    'objectifs'        => '',
-                    'evaluation'       => $config['evaluations'][1] ?? 'Contrôle continu + examen final',
-                    'annee_academique' => $config['annee_academique'],
-                    'type_workflow'    => $typeWorkflow,
-                ];
-                $existingId = (int)($ligne['_fiche_id'] ?? 0);
-                if ($existingId > 0) {
-                    $repo->updateFiche($existingId, $enseignantId, $ficheData);
-                    $dernierId = $existingId;
-                } else {
+            // ── Mode nouvelle fiche : créer N fiches PAR ÉTABLISSEMENT ─────
+            // Pour IESR_NON_UJKZ et VACATAIRE : grouper par établissement bénéficiaire
+            // Pour IESR_UJKZ : créer 1 fiche par ligne (comportement actuel)
+            
+            if ($typeWorkflow === 'IESR_UJKZ') {
+                // IESR_UJKZ : 1 fiche = 1 ligne (comportement actuel)
+                $dernierId = 0;
+                foreach ($lignes as $ligne) {
+                    $isEnc2 = !empty($ligne['is_encadrement']) || ($ligne['semestre'] ?? '') === 'ENC';
+                    if ($isEnc2 && $typeWorkflow !== 'IESR_UJKZ') { continue; }
+                    $ficheData = [
+                        'cours'            => $ligne['cours'],
+                        'code'             => $ligne['code']      ?? '',
+                        'code_ue'          => $ligne['code']      ?? '',
+                        'parcours'         => $ligne['parcours']  ?? '',
+                        'ntc'              => $ligne['ntc']        ?? '',
+                        'niveau'           => $ligne['niveau']    ?? ($config['niveaux'][0] ?? ''),
+                        'semestre'         => $isEnc2 ? 'ENC' : ($ligne['semestre'] ?? 'S1'),
+                        'volume_cm'        => $ligne['volume_cm'] ?? 0,
+                        'volume_td'        => $ligne['volume_td'] ?? 0,
+                        'volume_tp'        => $ligne['volume_tp'] ?? 0,
+                        'is_encadrement'   => $isEnc2 ? 1 : 0,
+                        'objectifs'        => '',
+                        'evaluation'       => $config['evaluations'][1] ?? 'Contrôle continu + examen final',
+                        'annee_academique' => $annee_academique,
+                        'type_workflow'    => $typeWorkflow,
+                    ];
+                    $existingId = (int)($ligne['_fiche_id'] ?? 0);
+                    if ($existingId > 0) {
+                        $repo->updateFiche($existingId, $enseignantId, $ficheData);
+                        $dernierId = $existingId;
+                    } else {
+                        $dernierId = $repo->createFiche($enseignantId, $ficheData);
+                    }
+                }
+            } else {
+                // IESR_NON_UJKZ + VACATAIRE : créer 1 fiche par établissement bénéficiaire
+                // Grouper les lignes par établissement
+                $lignesParEtab = [];
+                foreach ($lignes as $ligne) {
+                    $etabId = (int)($ligne['etab_beneficiaire_fiche'] ?? 0);
+                    $deptId = (int)($ligne['dept_beneficiaire_fiche'] ?? 0);
+                    if ($etabId <= 0) continue;  // Ignorer les lignes sans établissement
+                    
+                    $key = "$etabId:$deptId";
+                    if (!isset($lignesParEtab[$key])) {
+                        $lignesParEtab[$key] = [
+                            'etab_id'  => $etabId,
+                            'dept_id'  => $deptId,
+                            'lignes'   => []
+                        ];
+                    }
+                    $lignesParEtab[$key]['lignes'][] = $ligne;
+                }
+                
+                // Créer 1 fiche par groupe (établissement + département)
+                $dernierId = 0;
+                foreach ($lignesParEtab as $groupKey => $group) {
+                    $lignesGroup = $group['lignes'];
+                    $etabId = $group['etab_id'];
+                    $deptId = $group['dept_id'];
+                    
+                    // Agréger les volumes
+                    $volumeCM = 0;
+                    $volumeTD = 0;
+                    $volumeTP = 0;
+                    $coursNoms = [];
+                    
+                    foreach ($lignesGroup as $ligne) {
+                        $volumeCM += (int)($ligne['volume_cm'] ?? 0);
+                        $volumeTD += (int)($ligne['volume_td'] ?? 0);
+                        $volumeTP += (int)($ligne['volume_tp'] ?? 0);
+                        $coursNoms[] = $ligne['cours'] ?? '';
+                    }
+                    
+                    // Titre de la fiche : tous les cours séparés par " + "
+                    $titre = implode(' + ', array_unique($coursNoms));
+                    if (strlen($titre) > 200) {
+                        $titre = implode(', ', array_unique($coursNoms));
+                    }
+                    if (strlen($titre) > 200) {
+                        $titre = count(array_unique($coursNoms)) . ' cours';
+                    }
+                    
+                    $ficheData = [
+                        'cours'            => $titre,
+                        'code'             => $lignesGroup[0]['code'] ?? '',
+                        'code_ue'          => $lignesGroup[0]['code'] ?? '',
+                        'parcours'         => $lignesGroup[0]['parcours'] ?? '',
+                        'ntc'              => $lignesGroup[0]['ntc'] ?? '',
+                        'niveau'           => $lignesGroup[0]['niveau'] ?? ($config['niveaux'][0] ?? ''),
+                        'semestre'         => 'S1',  // Pour les groupes, défaut S1
+                        'volume_cm'        => $volumeCM,
+                        'volume_td'        => $volumeTD,
+                        'volume_tp'        => $volumeTP,
+                        'is_encadrement'   => 0,
+                        'etab_beneficiaire_fiche' => $etabId,
+                        'dept_beneficiaire_fiche' => $deptId,
+                        'objectifs'        => '',
+                        'evaluation'       => $config['evaluations'][1] ?? 'Contrôle continu + examen final',
+                        'annee_academique' => $annee_academique,
+                        'type_workflow'    => $typeWorkflow,
+                    ];
+                    
                     $dernierId = $repo->createFiche($enseignantId, $ficheData);
                 }
             }
+            
             $security->audit('fiche_submitted', strtoupper(trim($matricule)),
                 count($lignes).' cours soumis');
             unset($_SESSION['csrf_token']);
@@ -664,6 +832,9 @@ function collectOld(): array
         'volume_statutaire','abattement','motif_abattement',
         'volume_apres_abatt','etab_rattachement','etab_administratif','etab_beneficiaire',
         'mois_execution','fichier_diplome','fichier_nomination',
+        'annee_academique',  // ✓ AJOUTÉ : année académique saisie par enseignant
+        'telephone',          // ✓ AJOUTÉ : téléphone vacataire
+        'specialite',         // ✓ AJOUTÉ : spécialité vacataire
         // Rétro-compatibilité champ unique
         'cours','code','parcours','ntc',
         'niveau','semestre','volume_cm','volume_td','objectifs','evaluation',
@@ -681,7 +852,7 @@ function collectOld(): array
             $encTmp = !empty($_POST['l_enc'][$i]) || $semTmp === 'ENC';
             $lignes[] = [
                 'cours'                  => $cv,
-                'code'                   => $_POST['l_code'][$i]     ?? '',
+                'code'                   => strtoupper($_POST['l_code'][$i] ?? ''),
                 'parcours'               => $_POST['l_parcours'][$i] ?? '',
                 'ntc'                    => $_POST['l_ntc'][$i]      ?? '',
                 'niveau'                 => $_POST['l_niveau'][$i]   ?? '',

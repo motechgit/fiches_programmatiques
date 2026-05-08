@@ -364,7 +364,8 @@ class Auth
     public static function etapesWorkflow(string $typeWorkflow): array
     {
         if ($typeWorkflow === 'VACATAIRE') {
-            return ['chef_dept', 'directeur_adjoint', 'directeur', 'dei', 'vp_eip'];
+            // VACATAIRE : Chef → Dir adj → Dir → DEI (validation finale)
+            return ['chef_dept', 'directeur_adjoint', 'directeur', 'dei'];
         }
         // IESR_UJKZ et IESR_HORS : même circuit, DEI en dernier
         return ['chef_dept', 'directeur_adjoint', 'directeur', 'dei'];

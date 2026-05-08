@@ -40,16 +40,8 @@ class ValidationRepository
         $this->pdo->prepare("UPDATE fiches SET `$col` = ? WHERE id = ?")
             ->execute([$newStatut, $ficheId]);
 
-        // Si DEI vient de valider une fiche VACATAIRE → mettre statut_vp_eip en attente
-        if ($role === 'dei' && $decision === 'valide') {
-            $stmtWf = $this->pdo->prepare("SELECT type_workflow FROM fiches WHERE id = ? LIMIT 1");
-            $stmtWf->execute([$ficheId]);
-            $wfRow = $stmtWf->fetch();
-            if ($wfRow && ($wfRow['type_workflow'] ?? '') === 'VACATAIRE') {
-                $this->pdo->prepare("UPDATE fiches SET statut_vp_eip = 'en_attente' WHERE id = ?")
-                    ->execute([$ficheId]);
-            }
-        }
+        // NOTE : VP_EIP n'est PAS utilisé pour VACATAIRE
+        // VACATAIRE : workflow complet = Chef → Dir adj → Dir → DEI (validation finale)
 
         // Calculer le statut global
         $this->recalculerStatutGlobal($ficheId);
@@ -72,14 +64,12 @@ class ValidationRepository
 
         // Une étape rejetée → statut global rejetee (immédiat)
         $statuts = [$f['statut_chef'], $f['statut_dir_adj'], $f['statut_dir'], $f['statut_dei']];
-        if ($wf === 'VACATAIRE') {
-            $statuts[] = $f['statut_vp_eip'];
-        }
         if (in_array('rejete', $statuts, true)) {
             $global = 'rejetee';
         } elseif ($wf === 'VACATAIRE') {
-            // Validée seulement quand VP EIP a validé
-            $global = ($f['statut_vp_eip'] === 'valide') ? 'validee' : 'en_attente';
+            // VACATAIRE : Validée quand DEI a validé (validation finale)
+            // NOTE : VP_EIP n'est PAS utilisé pour VACATAIRE
+            $global = ($f['statut_dei'] === 'valide') ? 'validee' : 'en_attente';
         } else {
             // IESR_UJKZ et IESR_HORS : validée quand DEI a validé
             $global = ($f['statut_dei'] === 'valide') ? 'validee' : 'en_attente';
@@ -302,6 +292,7 @@ class ValidationRepository
                              WHEN f.statut='en_attente' THEN 2
                              WHEN f.statut='validee'    THEN 1 ELSE 0 END) AS _statut_global,
                     MAX(f.type_workflow) AS type_workflow,
+                    MAX(f.annee_academique) AS annee_academique,
                     MAX(CASE WHEN f.statut_chef    = 'rejete' THEN 2
                              WHEN f.statut_chef    = 'en_attente' THEN 1 ELSE 0 END) AS _sc,
                     MAX(CASE WHEN f.statut_dir_adj = 'rejete' THEN 2

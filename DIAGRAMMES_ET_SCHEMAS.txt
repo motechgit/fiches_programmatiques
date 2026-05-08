@@ -1,0 +1,326 @@
+═══════════════════════════════════════════════════════════════════════════════
+  FICHES PROGRAMMATIQUES UJKZ
+  DIAGRAMMES ET SCHÉMAS
+═══════════════════════════════════════════════════════════════════════════════
+
+───────────────────────────────────────────────────────────────────────────────
+1. ARCHITECTURE DE L'APPLICATION
+───────────────────────────────────────────────────────────────────────────────
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            UTILISATEUR / NAVIGATEUR                          │
+└────────────────┬──────────────────────────────────────────────────────────────┘
+                 │ HTTP Request
+                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         COUCHE CONTRÔLEURS (PHP)                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                               │
+│  index.php          → Créer/modifier fiches                                  │
+│  dashboard.php      → Tableau de bord (affichage)                            │
+│  vacataire_dossier.php → Affichage dossier vacation                         │
+│  valider_fiche_global.php → Validation fiches                               │
+│                                                                               │
+└────────────────┬──────────────────────────────────────────────────────────────┘
+                 │
+                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      COUCHE SERVICES & LOGIQUE MÉTIER                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                               │
+│  Auth.php                      → Authentification + rôles                   │
+│  Security.php                  → Sécurité (headers, session)                │
+│  FicheRepository.php           → Opérations sur fiches                      │
+│  ValidationRepository.php      → Workflow validation                        │
+│  VacataireDossierRepository.php → Opérations dossiers vacation             │
+│  Mailer.php                    → Envoi emails                               │
+│                                                                               │
+└────────────────┬──────────────────────────────────────────────────────────────┘
+                 │
+                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        COUCHE DONNÉES (MySQL)                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                               │
+│  enseignants              fiches                 vacataire_dossier          │
+│  ├─ id                    ├─ id                  ├─ id                       │
+│  ├─ matricule             ├─ enseignant_id       ├─ fiche_id                 │
+│  ├─ nom                   ├─ type_workflow       ├─ statut_dossier          │
+│  ├─ prenom                ├─ numero_fiche        ├─ statut_dei              │
+│  ├─ email                 ├─ qrcode_token        ├─ demande_vacation_html   │
+│  ├─ telephone (NOUVEAU)   ├─ cours               ├─ acte_nomination_html    │
+│  └─ specialite (NOUVEAU)  ├─ statut_dei          └─ created_at              │
+│                           ├─ statut_chef                                     │
+│                           └─ ...                                             │
+│                                                                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+───────────────────────────────────────────────────────────────────────────────
+2. FLUX DE VALIDATION (WORKFLOW VACATAIRE)
+───────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────┐
+│ VACATAIRE crée   │
+│ fiche            │
+│ (index.php)      │
+└────────┬─────────┘
+         │ Remplit : cours, volume, telephone, specialite
+         │ Upload : diplome, nomination_precedente
+         ▼
+┌──────────────────────────────────┐
+│ Fiche en BD                       │
+│ type_workflow = 'VACATAIRE'       │
+│ statut_chef = 'en_attente'        │
+│ statut_dei = 'en_attente'         │
+└────────┬─────────────────────────┘
+         │
+         ▼
+┌──────────────────────────────────────────────┐
+│ 1️⃣ CHEF DÉPARTEMENT valide                   │
+│ (valider_fiche_global.php)                  │
+│ → statut_chef = 'valide'                    │
+│ → Étape suivante accessible                 │
+└────────┬─────────────────────────────────────┘
+         │
+         ▼
+┌──────────────────────────────────────────────┐
+│ 2️⃣ DIRECTEUR ADJOINT valide                  │
+│ (si statut_chef = 'valide')                 │
+│ → statut_dir_adj = 'valide'                 │
+└────────┬─────────────────────────────────────┘
+         │
+         ▼
+┌──────────────────────────────────────────────┐
+│ 3️⃣ DIRECTEUR valide                          │
+│ (si statut_dir_adj = 'valide')              │
+│ → statut_dir = 'valide'                     │
+└────────┬─────────────────────────────────────┘
+         │
+         ▼
+┌──────────────────────────────────────────────┐
+│ 4️⃣ DEI VALIDE (VALIDATION FINALE)            │
+│ (si statut_dir = 'valide')                  │
+│ → statut_dei = 'valide'                     │
+│ → VacataireDossierRepository::createDossier │
+└────────┬─────────────────────────────────────┘
+         │ DÉCLENCHE AUTOMATIQUEMENT :
+         ▼
+┌──────────────────────────────────────────────┐
+│ DOSSIER VACATION CRÉÉ                        │
+│ vacataire_dossier.statut_dossier = 'complet'│
+│ vacataire_dossier.statut_dei = 'en_attente' │
+│                                             │
+│ Demande vacation générée (HTML)             │
+└────────┬─────────────────────────────────────┘
+         │
+         ▼
+┌──────────────────────────────────────────────┐
+│ DEI ACCÈDE AU DOSSIER                        │
+│ Dashboard → Onglet "📋 Dossier vacation"    │
+│ → Clique "👁 Consulter"                     │
+│ → vacataire_dossier.php?action=view         │
+└────────┬─────────────────────────────────────┘
+         │
+         ▼
+┌──────────────────────────────────────────────┐
+│ DEI VALIDE DOSSIER                           │
+│ Onglet Info → Actions DEI                   │
+│ Bouton "✓ Valider et générer acte"          │
+│ → POST vacataire_dossier.php?action=valider │
+└────────┬─────────────────────────────────────┘
+         │ Appelle : VacataireDossierRepository::validerDEI()
+         │ 1. Génère acte_nomination_html
+         │ 2. Met à jour : statut_dei = 'valide'
+         │ 3. Met à jour : statut_dossier = 'validee_dei'
+         ▼
+┌──────────────────────────────────────────────┐
+│ ✅ DOSSIER VALIDÉ                            │
+│ Acte de nomination généré                   │
+│ Enseignant peut voir l'acte                 │
+└──────────────────────────────────────────────┘
+
+
+───────────────────────────────────────────────────────────────────────────────
+3. ARCHITECTURE TABLEAU DE BORD
+───────────────────────────────────────────────────────────────────────────────
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         TABLEAU DE BORD (dashboard.php)                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                               │
+│  dashboard.php (contrôleur)                                                 │
+│  │                                                                            │
+│  ├─→ Authentification (token ou session)                                    │
+│  ├─→ Récupère enseignant                                                   │
+│  ├─→ Récupère fiches                                                       │
+│  ├─→ Récupère dossiers VACATAIRE                                           │
+│  │    └─ Si DEI : getDossiersPendingDEI() (TOUS les dossiers)             │
+│  │    └─ Si enseignant : getDossiersByEnseignant() (ses dossiers)         │
+│  │                                                                            │
+│  └─→ Appelle : templates/dashboard.php                                     │
+│      │                                                                       │
+│      └─ Affiche 4 ONGLETS :                                                │
+│         │                                                                    │
+│         ├─ 📋 Fiche (info générale)                                        │
+│         │  └─ Ses fiches programmatiques                                   │
+│         │                                                                    │
+│         ├─ 📚 Cours (détail cours)                                         │
+│         │  └─ Ses cours + volumes CM/TD/TP                                │
+│         │                                                                    │
+│         ├─ 📑 Fiche de suivi S1 / S2 (si applicable)                      │
+│         │  └─ Upload preuves, voir heures validées                        │
+│         │                                                                    │
+│         └─ 📋 Dossier vacation (NOUVEAU) ← Vous êtes ici                  │
+│            └─ Liste dossiers VACATAIRE                                    │
+│            └─ Bouton "👁 Consulter" → vacataire_dossier.php              │
+│                                                                              │
+│  LOGIQUE D'AFFICHAGE :                                                      │
+│  ├─ Enseignant : voir ses 4 onglets                                        │
+│  ├─ DEI : voir onglet "Dossier vacation" avec TOUS les dossiers           │
+│  └─ Chef/Dir : voir leurs fiches à valider                                │
+│                                                                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+───────────────────────────────────────────────────────────────────────────────
+4. ARCHITECTURE DOSSIER VACATION
+───────────────────────────────────────────────────────────────────────────────
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│              DOSSIER VACATION (vacataire_dossier.php)                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                               │
+│  vacataire_dossier.php?action=view&dossier_id=1&token=...                  │
+│  │                                                                            │
+│  ├─→ Vérification accès : userRole === 'dei' OR enseignant_id = userId    │
+│  ├─→ Récupère dossier (getDossier)                                         │
+│  ├─→ Récupère documents attachés (getDocuments)                            │
+│  ├─→ Charge demande_vacation_html                                          │
+│  ├─→ Charge acte_nomination_html (si validé)                               │
+│  │                                                                            │
+│  └─→ Affiche 4 ONGLETS (templates inline) :                                │
+│                                                                               │
+│     ┌─────────────────────────────────────────┐                            │
+│     │ 🔷 ONGLET 1 : ℹ️ INFO                   │                            │
+│     ├─────────────────────────────────────────┤                            │
+│     │ • Enseignant : Nom, Prénom              │                            │
+│     │ • Téléphone (nouveau)                   │                            │
+│     │ • Diplôme, Spécialité                   │                            │
+│     │ • FICHE PROGRAMMATIQUE VALIDÉE          │                            │
+│     │   └─ Numéro fiche (en gras vert)        │                            │
+│     │   └─ Enseignements confiés              │                            │
+│     │ • DEMANDE VACATION                      │                            │
+│     │   └─ Lien "Consulter la demande"        │                            │
+│     │ • Statut dossier                        │                            │
+│     │ • Validation DEI : [en_attente]         │                            │
+│     │ • ACTIONS DEI (si statut_dei='en_attente'):                        │                            │
+│     │   └─ ✓ Valider et générer acte          │                            │
+│     │   └─ ✗ Rejeter dossier                  │                            │
+│     │                                         │                            │
+│     └─────────────────────────────────────────┘                            │
+│                                                                               │
+│     ┌─────────────────────────────────────────┐                            │
+│     │ 🔷 ONGLET 2 : 📄 DEMANDE VACATION       │                            │
+│     ├─────────────────────────────────────────┤                            │
+│     │ • HTML généré (texte officiel)          │                            │
+│     │ • Placeholders remplacés :              │                            │
+│     │   {nom}, {prenom}, {grade}              │                            │
+│     │   {diplome}, {specialite}, etc.         │                            │
+│     │ • Bouton 🖨️ Imprimer                    │                            │
+│     │                                         │                            │
+│     └─────────────────────────────────────────┘                            │
+│                                                                               │
+│     ┌─────────────────────────────────────────┐                            │
+│     │ 🔷 ONGLET 3 : 📋 ACTE NOMINATION        │                            │
+│     ├─────────────────────────────────────────┤                            │
+│     │ • Visible SEULEMENT si :                │                            │
+│     │   └─ acteNomination != null (validé)    │                            │
+│     │   └─ OU userRole === 'dei'             │                            │
+│     │ • HTML généré par DEI                  │                            │
+│     │ • Contient : données + date signature   │                            │
+│     │ • Bouton 🖨️ Imprimer                    │                            │
+│     │                                         │                            │
+│     └─────────────────────────────────────────┘                            │
+│                                                                               │
+│     ┌─────────────────────────────────────────┐                            │
+│     │ 🔷 ONGLET 4 : 📁 DOCUMENTS              │                            │
+│     ├─────────────────────────────────────────┤                            │
+│     │ • Liste pièces jointes :                │                            │
+│     │   🎓 Diplôme                            │                            │
+│     │   📜 Nomination précédente              │                            │
+│     │   📄 Autres documents                   │                            │
+│     │ • Info : nom, taille, date upload      │                            │
+│     │                                         │                            │
+│     └─────────────────────────────────────────┘                            │
+│                                                                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+───────────────────────────────────────────────────────────────────────────────
+5. RÔLES ET PERMISSIONS (TABLE DE VÉRITÉ)
+───────────────────────────────────────────────────────────────────────────────
+
+                    ENSEIGNANT  CHEF_DEPT  DIR_ADJ  DIR  DEI  VP_EIP
+                    ──────────  ─────────  ───────  ───  ───  ──────
+Créer fiche           ✅         ❌        ❌      ❌   ❌    ❌
+Modifier sa fiche     ✅         ❌        ❌      ❌   ❌    ❌
+Voir ses fiches       ✅         ❌        ❌      ❌   ❌    ❌
+Valider (chef)        ❌         ✅        ❌      ❌   ❌    ❌
+Valider (dir_adj)     ❌         ❌        ✅      ❌   ❌    ❌
+Valider (dir)         ❌         ❌        ❌      ✅   ❌    ❌
+Valider (dei)         ❌         ❌        ❌      ❌   ✅    ❌
+Voir dossier vacation ✅         ❌        ❌      ❌   ✅    ❌
+Valider dossier       ❌         ❌        ❌      ❌   ✅    ❌
+Générer acte          ❌         ❌        ❌      ❌   ✅    ❌
+
+✅ = Autorisé
+❌ = Non autorisé
+
+
+───────────────────────────────────────────────────────────────────────────────
+6. RELATION ENTRE LES TABLES BD
+───────────────────────────────────────────────────────────────────────────────
+
+         enseignants
+         │   │
+         │   └──────────────┐
+         │                   │
+         ▼                   ▼
+    matricule          id (PK)
+    nom              matricule
+    prenom       ┌──► nom
+    email        │    prenom
+    telephone    │    email
+    specialite   │    telephone
+    diplome      │    specialite
+    grade        │    diplome
+                 │    grade
+                 │
+         ┌───────┴──────────────┐
+         │                       │
+         ▼                       ▼
+    fiches (PK:id)        vacataire_dossier
+    id                     id (PK)
+    enseignant_id (FK) ──► fiche_id (FK) ────┐
+    type_workflow          enseignant_id      │
+    numero_fiche       ┌─► statut_dossier    │
+    qrcode_token       │   statut_dei        │
+    cours              │   demande_vacation_html
+    volume_cm/td/tp    │   acte_nomination_html
+    statut_chef        │   created_at
+    statut_dir_adj     │   validated_by_dei_at
+    statut_dir         │
+    statut_dei         │   vacataire_dossier_documents
+    statut_vp_eip      │   id (PK)
+    ...                └─► dossier_id (FK)
+                           type
+                           nom_fichier
+                           chemin_fichier
+                           taille_ko
+                           uploaded_at
+
+
+═══════════════════════════════════════════════════════════════════════════════
+FIN DES DIAGRAMMES
+═══════════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,340 @@
+═══════════════════════════════════════════════════════════════════════════════
+  EXTRAITS DE CODE — DÉTAIL TECHNIQUE DES MODIFICATIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+───────────────────────────────────────────────────────────────────────────────
+1. MODIFICATION : dashboard.php
+───────────────────────────────────────────────────────────────────────────────
+
+LIGNE 7 : AJOUTER IMPORT
+────────────────────────
+AVANT :
+  require_once __DIR__ . '/src/Database.php';
+  require_once __DIR__ . '/src/Security.php';
+  ...
+  require_once __DIR__ . '/src/Auth.php';
+
+APRÈS :
+  require_once __DIR__ . '/src/Database.php';
+  require_once __DIR__ . '/src/Security.php';
+  ...
+  require_once __DIR__ . '/src/Auth.php';
+  require_once __DIR__ . '/src/VacataireDossierRepository.php';  ← NOUVEAU
+
+
+LIGNE 190 : AJOUTER 'vacataire' À LA LISTE DES VUES
+─────────────────────────────────────────────────────
+AVANT :
+  $vue = in_array($_GET['vue'] ?? '', ['fiche','cours','suivi_s1','suivi_s2']) 
+    ? $_GET['vue'] : 'fiche';
+
+APRÈS :
+  $vue = in_array($_GET['vue'] ?? '', ['fiche','cours','suivi_s1','suivi_s2','vacataire']) 
+    ? $_GET['vue'] : 'fiche';
+
+
+LIGNE 193-197 : RÉCUPÉRER DOSSIERS VACATAIRE
+──────────────────────────────────────────────
+AVANT :
+  $bodyContent = renderTemplate('dashboard', [
+    'enseignant'       => $enseignant,
+    ...
+
+APRÈS :
+  // ── Récupérer les dossiers VACATAIRE ────────────────────────
+  $dossiersVacataire = [];
+  $pdo = Database::getInstance();
+  $vacatRepo = new VacataireDossierRepository($pdo);
+  $dossiersVacataire = $vacatRepo->getDossiersByEnseignant((int)$enseignant['id']);
+
+  $bodyContent = renderTemplate('dashboard', [
+    'enseignant'       => $enseignant,
+    ...
+    'dossiersVacataire'  => $dossiersVacataire,  ← NOUVEAU
+  ]);
+
+───────────────────────────────────────────────────────────────────────────────
+2. MODIFICATION : templates/dashboard.php
+───────────────────────────────────────────────────────────────────────────────
+
+LIGNE 201-210 : AJOUTER ONGLET DOSSIER VACATION
+────────────────────────────────────────────────
+AVANT :
+  <?php if (!empty($fichesAvecPreuves['S2'])): ?>
+  <a href="dashboard.php?token=<?= urlencode($tok) ?>&vue=suivi_s2"
+     class="db-tab <?= $vue==='suivi_s2'?'active':'' ?>">
+    📑 Fiche de suivi S2
+  </a>
+  <?php endif; ?>
+</div>
+
+APRÈS :
+  <?php if (!empty($fichesAvecPreuves['S2'])): ?>
+  <a href="dashboard.php?token=<?= urlencode($tok) ?>&vue=suivi_s2"
+     class="db-tab <?= $vue==='suivi_s2'?'active':'' ?>">
+    📑 Fiche de suivi S2
+  </a>
+  <?php endif; ?>
+  <?php if (!empty($dossiersVacataire)): ?>
+  <a href="dashboard.php?token=<?= urlencode($tok) ?>&vue=vacataire"
+     class="db-tab <?= $vue==='vacataire'?'active':'' ?>">
+    📋 Dossier vacation (<?= count($dossiersVacataire) ?>)
+  </a>
+  <?php endif; ?>
+</div>
+
+
+LIGNE 862-910 : AJOUTER CONTENU ONGLET VACATAIRE
+─────────────────────────────────────────────────
+APRÈS LIGNE 860 (fin onglet suivi), AJOUTER :
+
+<div class="db-tab-content <?= $vue==='vacataire'?'active':'' ?>" id="tab-vacataire">
+  <?php if (empty($dossiersVacataire)): ?>
+    <div style="padding: 40px; text-align: center; background: #f9f9f9;">
+      <p style="font-size: 16px; color: #666;">📭 Aucun dossier de vacation</p>
+    </div>
+  <?php else: ?>
+    <div style="padding: 20px; background: #fff;">
+      <h3 style="margin-top: 0;">📋 Mes dossiers de vacation</h3>
+      <table style="width: 100%; border-collapse: collapse;">
+        <thead style="background: #f5f5f5; border-bottom: 2px solid #ddd;">
+          <tr>
+            <th style="padding: 12px; text-align: left;">ID</th>
+            <th style="padding: 12px; text-align: left;">Fiche</th>
+            <th style="padding: 12px; text-align: left;">Année</th>
+            <th style="padding: 12px; text-align: left;">Statut</th>
+            <th style="padding: 12px; text-align: left;">Validation DEI</th>
+            <th style="padding: 12px; text-align: center;">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach ($dossiersVacataire as $d): ?>
+          <tr style="border-bottom: 1px solid #eee;">
+            <td style="padding: 12px;"><?= $d['id'] ?></td>
+            <td style="padding: 12px;"><?= htmlspecialchars($d['numero_fiche'] ?? 'N/A') ?></td>
+            <td style="padding: 12px;"><?= htmlspecialchars($d['annee_academique']) ?></td>
+            <td style="padding: 12px;">
+              <span style="display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: bold;
+                          background: <?= ($d['statut_dossier'] === 'complet' ? '#cfe2ff' : '#d1e7dd') ?>;">
+                <?= ucfirst(str_replace('_', ' ', $d['statut_dossier'])) ?>
+              </span>
+            </td>
+            <td style="padding: 12px;">
+              <span style="display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: bold;">
+                <?= ucfirst($d['statut_dei']) ?>
+              </span>
+            </td>
+            <td style="padding: 12px; text-align: center;">
+              <a href="vacataire_dossier.php?action=view&dossier_id=<?= $d['id'] ?>&onglet=info&token=<?= urlencode($tok) ?>" 
+                 class="btn btn-sm btn-primary">
+                👁 Consulter
+              </a>
+            </td>
+          </tr>
+          <?php endforeach; ?>
+        </tbody>
+      </table>
+    </div>
+  <?php endif; ?>
+</div><!-- /onglet vacataire -->
+
+───────────────────────────────────────────────────────────────────────────────
+3. MODIFICATION : templates/form.php
+───────────────────────────────────────────────────────────────────────────────
+
+LIGNE 353-365 : AJOUTER CHAMP TÉLÉPHONE
+────────────────────────────────────────
+AJOUTER AVANT LA SECTION SPÉCIALITÉ :
+
+<!-- Téléphone — uniquement pour VACATAIRE -->
+<div id="bloc_vacataire_telephone" style="<?= !$isVac ? 'display:none' : '' ?>">
+  <div style="display:flex;flex-wrap:wrap;gap:4px 16px;margin-bottom:5px;align-items:baseline">
+    <div style="display:flex;align-items:center;gap:4px;flex:1;min-width:300px">
+      <label style="font-weight:700;white-space:nowrap;margin:0">Téléphone :</label>
+      <input type="tel" name="telephone"
+             value="<?= $e($old['telephone']??'') ?>"
+             placeholder="Ex : +226 xx xx xx xx" maxlength="20"
+             style="border:none;border-bottom:1px solid #999;
+                    font-size:10pt;padding:1px 4px;flex:1;outline:none">
+    </div>
+  </div>
+</div>
+
+
+LIGNE 1356-1357 : MODIFIER SCRIPT JS DE VISIBILITÉ
+──────────────────────────────────────────────────
+AVANT :
+    // ✅ Afficher/masquer champ Spécialité pour vacataire
+    var bvs = document.getElementById("bloc_vacataire_specialite");
+    if (bvs) bvs.style.display = vac ? "" : "none";
+
+APRÈS :
+    // ✅ Afficher/masquer champs Téléphone et Spécialité pour vacataire
+    var bvt = document.getElementById("bloc_vacataire_telephone");
+    if (bvt) bvt.style.display = vac ? "" : "none";
+    var bvs = document.getElementById("bloc_vacataire_specialite");
+    if (bvs) bvs.style.display = vac ? "" : "none";
+
+───────────────────────────────────────────────────────────────────────────────
+4. MODIFICATION : valider_fiche_global.php
+───────────────────────────────────────────────────────────────────────────────
+
+LIGNE 10 : AJOUTER IMPORT
+──────────────────────────
+AVANT :
+  require_once __DIR__ . '/src/ValidationRepository.php';
+  require_once __DIR__ . '/src/Mailer.php';
+
+APRÈS :
+  require_once __DIR__ . '/src/ValidationRepository.php';
+  require_once __DIR__ . '/src/VacataireDossierRepository.php';
+  require_once __DIR__ . '/src/Mailer.php';
+
+
+LIGNE 113-132 : AJOUTER CRÉATION DOSSIER VACATAIRE
+───────────────────────────────────────────────────
+APRÈS LIGNE 109 (après $repo->enregistrerDecision(...)), AJOUTER :
+
+    // ════════════════════════════════════════════════════════════
+    // CRÉATION AUTOMATIQUE DOSSIER VACATAIRE
+    // Après validation DEI (validation finale pour type VACATAIRE)
+    // ════════════════════════════════════════════════════════════
+    if ($role === 'dei' && $decision === 'valide' && 
+        ($fiche['type_workflow'] ?? '') === 'VACATAIRE') {
+        
+        try {
+            $vacatRepo = new VacataireDossierRepository($pdo);
+            $dossierId = $vacatRepo->createDossierAfterValidation(
+                (int)$fiche['id'],
+                (int)$fiche['enseignant_id'],
+                $fiche['annee_academique']
+            );
+            
+            // Log création dossier
+            error_log("✅ Dossier VACATAIRE créé : ID=$dossierId pour fiche={$fiche['id']}");
+        } catch (Exception $e) {
+            error_log("⚠️ Erreur création dossier VACATAIRE : " . $e->getMessage());
+        }
+    }
+
+───────────────────────────────────────────────────────────────────────────────
+5. MODIFICATION : src/Auth.php
+───────────────────────────────────────────────────────────────────────────────
+
+LIGNE 364-371 : MODIFIER etapesWorkflow()
+──────────────────────────────────────────
+AVANT :
+    public static function etapesWorkflow(string $typeWorkflow): array
+    {
+        if ($typeWorkflow === 'VACATAIRE') {
+            return ['chef_dept', 'directeur_adjoint', 'directeur', 'dei', 'vp_eip'];
+        }
+        return ['chef_dept', 'directeur_adjoint', 'directeur', 'dei'];
+    }
+
+APRÈS :
+    public static function etapesWorkflow(string $typeWorkflow): array
+    {
+        if ($typeWorkflow === 'VACATAIRE') {
+            // VACATAIRE : Chef → Dir adj → Dir → DEI (validation finale)
+            return ['chef_dept', 'directeur_adjoint', 'directeur', 'dei'];
+        }
+        // IESR_UJKZ et IESR_HORS : même circuit, DEI en dernier
+        return ['chef_dept', 'directeur_adjoint', 'directeur', 'dei'];
+    }
+
+───────────────────────────────────────────────────────────────────────────────
+6. MODIFICATION : vacataire_dossier.php
+───────────────────────────────────────────────────────────────────────────────
+
+LIGNE 20-52 : AUTHENTIFICATION AVEC TOKEN OU SESSION
+─────────────────────────────────────────────────────
+require_once __DIR__ . '/src/Database.php';
+require_once __DIR__ . '/src/Security.php';
+require_once __DIR__ . '/src/Auth.php';
+require_once __DIR__ . '/src/FicheRepository.php';
+require_once __DIR__ . '/src/VacataireDossierRepository.php';
+
+$config = require __DIR__ . '/config/security.php';
+$security = new Security($config);
+$security->sendSecurityHeaders();
+$security->startSecureSession();
+
+// Vérifier authentification : token OU session
+$rawToken = $_GET['token'] ?? '';
+$db = Database::getInstance();
+
+if (!Auth::check() && empty($rawToken)) {
+    http_response_code(403);
+    die('❌ Accès refusé - Authentification requise');
+}
+
+// Si token fourni, vérifier qu'il appartient à un enseignant
+$enseignant = null;
+if (!empty($rawToken)) {
+    if (!preg_match('/^[a-f0-9]{64}$/', $rawToken)) {
+        http_response_code(403);
+        die('❌ Token invalide');
+    }
+    $ficheRepo = new FicheRepository();
+    $enseignant = $ficheRepo->findByToken($rawToken);
+    if (!$enseignant) {
+        http_response_code(403);
+        die('❌ Accès refusé - Token non reconnu');
+    }
+} else {
+    // Session active
+    $userId = Auth::userId();
+    if ($userId <= 0) {
+        http_response_code(403);
+        die('❌ Accès refusé - Connexion requise');
+    }
+}
+
+
+LIGNE 79 : VÉRIFICATION D'ACCÈS
+────────────────────────────────
+if ($userRole === 'dei') {
+    $hasAccess = true; // DEI : accès complet et validation
+} elseif ($dossier['enseignant_id'] == $userId) {
+    $hasAccess = true; // Enseignant : voir son dossier
+}
+
+
+LIGNE 176 : ONGLET ACTE NOMINATION VISIBLE POUR DEI
+────────────────────────────────────────────────────
+<?php if ($acteNomination || $userRole === 'dei'): ?>
+<button class="tab <?= ($onglet === 'acte' ? 'active' : '') ?>" onclick="selectTab('acte')">
+  📋 Acte nomination
+</button>
+<?php endif; ?>
+
+
+LIGNE 198 & 209 : GESTION VALEURS NULL
+───────────────────────────────────────
+<div><?= htmlspecialchars($dossier['telephone'] ?? 'Non renseigné') ?></div>
+...
+<div><?= htmlspecialchars($dossier['specialite'] ?? 'Non renseignée') ?></div>
+
+
+LIGNE 261 : ACTIONS DEI
+───────────────────────
+<?php if ($userRole === 'dei' && $dossier['statut_dei'] === 'en_attente'): ?>
+<div style="...">
+  <h3>⚙️ Actions DEI</h3>
+  <form method="POST" action="vacataire_dossier.php?action=valider&dossier_id=<?= $dossierId ?>">
+    <button type="submit" class="btn btn-primary" onclick="return confirm(...)">
+      ✓ Valider et générer acte de nomination
+    </button>
+  </form>
+  <form method="POST" action="vacataire_dossier.php?action=rejeter&dossier_id=<?= $dossierId ?>">
+    <button type="submit" class="btn btn-danger" onclick="return confirm(...)">
+      ✗ Rejeter dossier
+    </button>
+  </form>
+</div>
+<?php endif; ?>
+
+═══════════════════════════════════════════════════════════════════════════════
+FIN DES EXTRAITS DE CODE
+═══════════════════════════════════════════════════════════════════════════════
